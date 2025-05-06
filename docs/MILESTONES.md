@@ -11,14 +11,19 @@ This document outlines the key milestones for the OCR Dataset Builder project.
 - [x] **Milestone 2: Frame Extraction Pipeline**
     - [x] Implement `extract_frames` function in `ocr_dataset_builder/video_processing.py`.
     - [x] Develop `ocr_dataset_builder/frame_pipeline.py` for batch processing video directories (parallel processing, metadata copying, CLI with `fire`, progress bars).
+    - [x] Implement robust checkpointing mechanism.
     - [x] Test frame extraction pipeline on sample videos.
 
 - [🚧] **Milestone 3: LLM Prompt Adaptation & Core LLM Interaction** (Partially In Progress)
     - [x] Adapt `ocr_dataset_builder/prompts/ocr_image_multi_task_prompt.md` for video frame sequences (per-frame Tasks 1-4, per-sequence Task 5, revised few-shot examples).
     - [🚧] Develop/finalize `ocr_dataset_builder/llm_processing.py` for robust interaction with the Gemini API for a single sequence of frames (API calls, response parsing, error handling for single call).
+    - [x] Standardize logging and path handling in `llm_processing.py`.
 
-- [ ] **Milestone 4: LLM Analysis Pipeline Development**
-    - [ ] Develop `ocr_dataset_builder/llm_pipeline.py` to:
+- [🚧] **Milestone 4: LLM Analysis Pipeline Development**
+    - [🚧] Develop `ocr_dataset_builder/llm_pipeline.py` to:
+        - [x] Implement robust checkpointing mechanism.
+        - [x] Implement parallel processing for directories (ProcessPoolExecutor) and batches within a directory (ThreadPoolExecutor).
+        - [x] Standardize logging and path handling.
         - [ ] Ingest frame sequences (output from `frame_pipeline.py`).
         - [ ] Manage batching of sequences for `llm_processing.py`.
         - [ ] Orchestrate calls to `llm_processing.py` for each sequence.
@@ -26,9 +31,12 @@ This document outlines the key milestones for the OCR Dataset Builder project.
         - [ ] Implement CLI, progress tracking, and overall error management.
     - [ ] Define and implement final structured output format (e.g., JSONL) for LLM analysis results.
 
-- [ ] **Milestone 5: Tesseract OCR Pipeline (Optional Baseline)**
-    - [ ] Develop/finalize `ocr_dataset_builder/tesseract_processing.py` for Tesseract OCR on single frames.
-    - [ ] Develop/finalize `ocr_dataset_builder/tesseract_pipeline.py` to apply OCR across datasets of frames, including CLI and output generation (e.g., per-frame text files or structured JSON).
+- [🚧] **Milestone 5: Tesseract OCR Pipeline (Optional Baseline)**
+    - [🚧] Develop/finalize `ocr_dataset_builder/tesseract_processing.py` for Tesseract OCR on single frames.
+        - [x] Standardize logging and path handling.
+    - [🚧] Develop/finalize `ocr_dataset_builder/tesseract_pipeline.py` to apply OCR across datasets of frames, including CLI and output generation (e.g., per-frame text files or structured JSON).
+        - [x] Implement robust checkpointing mechanism.
+        - [x] Standardize logging and path handling.
     - [ ] Determine its exact role (e.g., baseline, input to LLM) and integration point.
 
 - [ ] **Milestone 6: Full System Integration & Initial Testing**
@@ -47,10 +55,12 @@ This document outlines the key milestones for the OCR Dataset Builder project.
     - [ ] Monitor for performance, cost, and potential issues at scale.
     - [ ] Finalize the generated dataset.
 
-- [ ] **Milestone 9: Documentation & Cleanup** (Expanded)
+- [🚧] **Milestone 9: Documentation & Cleanup** (Partially In Progress)
     - [x] Update `README.md`, `docs/DESIGN.md`, `docs/MILESTONES.md` (initial pass complete, further updates as needed).
-    - [ ] Create `docs/PIPELINE_GUIDE.md` with detailed usage for each pipeline.
-    - [ ] Create `docs/DATA_FORMATS.md` detailing all intermediate and final data structures.
+    - [x] Create `docs/PIPELINE_GUIDE.md` with detailed usage for each pipeline (substantially complete).
+    - [x] Create `docs/DATA_FORMATS.md` detailing all intermediate and final data structures (substantially complete).
+    - [x] Standardize logging (RichHandler) across main pipeline scripts.
+    - [x] Refactor `sys.path` usage from main pipeline scripts.
     - [ ] Create `docs/PROMPT_ENGINEERING_GUIDE.md` (if deeper explanation than in `DESIGN.md` is needed).
     - [ ] Create `docs/TROUBLESHOOTING.md`.
     - [ ] Create `docs/CONTRIBUTING.md` (if applicable).
