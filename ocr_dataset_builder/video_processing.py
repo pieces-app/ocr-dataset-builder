@@ -4,12 +4,17 @@ import random
 from pathlib import Path
 
 import cv2
-from tqdm import tqdm
-from rich import print
 
-# Configure logging
+# from rich import print # Commented out, using RichHandler for logging
+from rich.logging import RichHandler  # Added for rich logging
+from tqdm import tqdm
+
+# Configure logging with RichHandler
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(message)s",  # RichHandler handles its own formatting
+    datefmt="[%X]",
+    handlers=[RichHandler(rich_tracebacks=True, markup=True, show_path=False)],
 )
 
 
@@ -142,7 +147,7 @@ def extract_frames(
                 continue
 
             current_second = int(round(frame_count / native_fps))
-            frame_filename = f"frame_{current_second:06d}.jpg"
+            frame_filename = f"frame_{current_second:06d}.png"
             frame_path = output_dir_obj / frame_filename
 
             frame_to_process = frame
@@ -266,7 +271,7 @@ if __name__ == "__main__":
         "Databases： Index optimization with dates [I0qXl321kjE].mp4"
     )
 
-    test_output_dir = "./temp_test_frames_sampled"
+    test_output_dir = "./temp_test_frames_sampled_png"
     test_max_dimension = 768
     test_max_frames = 15  # Example: Sample down to 15 frames
 

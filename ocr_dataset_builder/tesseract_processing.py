@@ -1,9 +1,11 @@
 import logging
 from pathlib import Path
 
+from rich.logging import RichHandler
+
 try:
     import pytesseract
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image
 except ImportError as e:
     logging.error(
         "Required libraries (pytesseract, Pillow) not found. "
@@ -12,9 +14,12 @@ except ImportError as e:
     # Re-raise or exit if these are critical dependencies for module load
     raise
 
-# Configure logging
+# Configure logging with RichHandler
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(rich_tracebacks=True, markup=True, show_path=False)],
 )
 
 
@@ -91,7 +96,6 @@ def process_image_with_tesseract(image_path: Path, language: str = "eng") -> str
 
 # Example usage within this module (optional)
 if __name__ == "__main__":
-    # Use print directly for simple example output
     from rich import print
 
     logging.getLogger().setLevel(logging.DEBUG)  # Enable debug for testing
@@ -99,20 +103,29 @@ if __name__ == "__main__":
 
     if check_tesseract_install():
         print("\n--- Testing Pytesseract on a dummy/test image --- ")
-        test_image_path = Path(
-            "extracted_frames/#1 Covid-19 Lockdown Bioinformatics-along [8yLd7PtIMmA]/frame_000001.jpg"
-        )
+        # Example path, ensure this or a similar test image exists for this check
+        test_image_dir = Path("temp_test_frames_sampled_png")  # Or any dir with frames
+        # Attempt to find any png in that dir for testing
+        test_images = list(test_image_dir.glob("frame_*.png"))
+        if not test_images:
+            test_images = list(test_image_dir.glob("frame_*.jpg"))  # Fallback
 
-        print(f"Attempting to process: {test_image_path}")
-        extracted_text = process_image_with_tesseract(test_image_path)
+        if test_images:
+            test_image_path = test_images[0]
+            print(f"Attempting to process: {test_image_path}")
+            extracted_text = process_image_with_tesseract(test_image_path)
 
-        if extracted_text is not None:
-            print("\n[green]--- Extracted Text ---[/green] ")
-            print(f">>>\n{extracted_text}\n<<<")
-            print("----------------------")
+            if extracted_text is not None:
+                print("\n[green]--- Extracted Text ---[/green] ")
+                print(f">>>\n{extracted_text}\n<<<")
+                print("----------------------")
+            else:
+                print("\n[yellow]--- Pytesseract processing failed ---[/yellow]")
+                print("(Check Tesseract installation, image validity, and logs)")
         else:
-            print("\n[yellow]--- Pytesseract processing failed ---[/yellow]")
-            print("(Check Tesseract installation, image validity, and logs)")
+            print(
+                f"\n[yellow]No test images found in {test_image_dir} to test OCR processing.[/yellow]"
+            )
 
     else:
         print(

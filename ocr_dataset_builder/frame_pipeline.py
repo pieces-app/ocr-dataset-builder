@@ -1,14 +1,16 @@
 import concurrent.futures  # Added for parallelism
 import logging
+import os  # Added for os.cpu_count() for default max_workers
 import shutil  # Added for file copying
 import sys
 import time
 from pathlib import Path
-import os  # Added for os.cpu_count() for default max_workers
 
 import fire  # Import fire for CLI
+
+# from rich import print # Commented out, using RichHandler for logging
+from rich.logging import RichHandler  # Added for rich logging
 from tqdm import tqdm
-from rich import print
 
 # Ensure the package modules can be found
 project_root = Path(__file__).resolve().parent.parent
@@ -16,9 +18,12 @@ sys.path.insert(0, str(project_root))
 
 from ocr_dataset_builder.video_processing import extract_frames
 
-# Configure basic logging
+# Configure basic logging with RichHandler
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(message)s",  # RichHandler handles its own formatting
+    datefmt="[%X]",  # Optional: time format for non-RichHandler (if any)
+    handlers=[RichHandler(rich_tracebacks=True, markup=True, show_path=False)],
 )
 
 VIDEO_EXTENSIONS = [".mp4", ".webm", ".mkv", ".avi", ".mov"]  # Add more if needed

@@ -1,12 +1,13 @@
+import logging
 import os
 import re
-import logging
+import time
 from pathlib import Path
+
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from rich import print
-import time
 
 # Configure basic logging
 logging.basicConfig(

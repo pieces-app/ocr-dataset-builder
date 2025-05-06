@@ -1,27 +1,26 @@
 import concurrent.futures
 import json
 import logging
-import sys
+import os  # For os.cpu_count()
 import time
 from pathlib import Path
-import os  # For os.cpu_count()
 
 import fire
+from rich.logging import RichHandler  # Added for rich logging
 from tqdm import tqdm
 
-# Ensure the package modules can be found
-project_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(project_root))
-
-# Import necessary functions AFTER potentially modifying sys.path
+# Local package imports (assuming package is installed/dev mode)
 from ocr_dataset_builder.tesseract_processing import (
-    process_image_with_tesseract,
     check_tesseract_install,
+    process_image_with_tesseract,
 )
 
-# Configure basic logging
+# Configure basic logging with RichHandler
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(message)s",  # RichHandler handles its own formatting
+    datefmt="[%X]",
+    handlers=[RichHandler(rich_tracebacks=True, markup=True, show_path=False)],
 )
 
 

@@ -7,10 +7,11 @@ import sys
 import time  # Added for overall pipeline timing
 from pathlib import Path
 
-from dotenv import load_dotenv
 import fire
-from tqdm import tqdm
+from dotenv import load_dotenv
 from google.genai.types import CountTokensResponse
+from rich.logging import RichHandler
+from tqdm import tqdm
 
 # from rich import print # Removed unused import
 
@@ -26,9 +27,12 @@ from ocr_dataset_builder.llm_processing import (
     process_image_sequence,
 )
 
-# Configure basic logging
+# Configure basic logging with RichHandler
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(message)s",  # RichHandler handles its own formatting
+    datefmt="[%X]",
+    handlers=[RichHandler(rich_tracebacks=True, markup=True, show_path=False)],
 )
 # logging.getLogger().setLevel(logging.DEBUG) # Uncomment for cost debug logs
 
