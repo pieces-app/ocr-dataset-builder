@@ -18,22 +18,21 @@ d) For general on-screen text **not attributable** to a specific person (e.g., c
 
 🆕 Redundancy & Appending Rules (Apply **Individually** to Tasks 1-4):
 - For **each** task (1, 2, 3, and 4) and for **each** frame (from Frame 1 to N-1):
-- Let `Content(i)` be the generated content for the current frame (`Frame i`) for the current task.
-- Let `Content(i-1)` be the generated content for the previous frame (`Frame i-1`) for the current task.
+- Let `FullContent(i)` be the **full, final textual content** that *would* be generated for the current frame (`Frame i`) for the current task, before applying these rules.
+- Let `FullContent(i-1)` be the **full, final textual content** associated with the previous frame (`Frame i-1`) for the current task (if `Frame i-1` used a placeholder, reconstruct its full content first for this comparison).
+- These comparisons must be based on the **textual content only**, ignoring minor visual variations (like cursor position) if the text itself is unchanged.
 
-- **Priority 1: Exact Match:** If `Content(i)` is **exactly identical** to `Content(i-1)`, output **only** the placeholder string `<<< SAME_AS_PREVIOUS >>>` for `Frame i`.
+- **Priority 1: Exact Match:** If `FullContent(i)` is **exactly identical** to `FullContent(i-1)`, output **only** the reference string `F:i-1` for `Frame i`, where `i-1` is the actual index of the previous frame. Example: `F:2`
 
-- **Priority 2: Appended Content:** If `Content(i)` is **not** identical to `Content(i-1)`, check if `Content(i)` **starts with** `Content(i-1)` followed by a newline character (`\n`) and then has additional, non-empty content (`NewContent`).
-    - Formally: Check if `Content(i) == Content(i-1) + "\n" + NewContent`, where `NewContent` is not empty.
-    - If this condition is met, output **only** the placeholder `<<< PREVIOUS_PLUS >>>` followed by a newline, followed by **only** the `NewContent` for `Frame i`. Example:
-      ```
-      <<< PREVIOUS_PLUS >>>
-      [Only the newly appended content goes here]
-      ```
+- **Priority 2: Appended Content:** If `FullContent(i)` is **not** identical to `FullContent(i-1)` (meaning Priority 1 did not apply), then check if `FullContent(i)` **starts with** `FullContent(i-1)` followed by a newline character (`\n`) and then has additional, non-empty appended text (`AppendedText`).
+-    Formally: Check if `FullContent(i) == FullContent(i-1) + "\n" + AppendedText`, where `AppendedText` is not empty or just whitespace.
+-    If this condition is met, output **only** the reference string `F:i-1 + "\n" + AppendedText` for `Frame i`, where `i-1` is the previous frame index and `AppendedText` is ONLY the new content. Example:
+-     ```
+-     F:0 + "\nSpeaker: Nina 10:07AM: Tests mostly passed..."
+-     ```
 
-- **Priority 3: Full Content:** If neither of the above conditions is met (i.e., the content is different but not just appended), output the **full** `Content(i)` for `Frame i`.
-
-- These rules apply independently to each task (Task 1 can use `<<< SAME_AS_PREVIOUS >>>` while Task 4 uses `<<< PREVIOUS_PLUS >>>`, etc.).
+- **Priority 3: Full Content:** If neither Priority 1 nor Priority 2 applies (i.e., the content is different but not merely appended), output the **full** `FullContent(i)` for `Frame i`.
+- These rules apply independently to each task (Task 1 can use `F:i-1` while Task 4 uses `F:i-1 + "\n..."`, etc.).
 - Frame 0 for any task can NEVER use these placeholders.
 
 Sequential Tasks to Perform on the Input IMAGE Sequence:
@@ -94,43 +93,43 @@ Generate ONE concise, human-readable narrative (1-3 paragraphs) describing the a
 
 Provide the output for the given input IMAGE sequence strictly adhering to this structure (assuming N frames).
 **Crucially, ensure the header lines (`==== TASK ... ====` and `-- Frame ... --`) exactly match these specifications for reliable parsing.**
-The placeholders `<<< SAME_AS_PREVIOUS >>>` or `<<< PREVIOUS_PLUS >>>\n[NewContent]` should be the only content for a given frame within a task when used.
+The reference strings `F:i-1` or `F:i-1 + "\n[AppendedText]"` should be the only content for a given frame within a task when used.
 
 ==== TASK 1: Raw OCR Output (List of N strings) ====
 -- Frame 0 --
 [Raw OCR text for frame 0, with speaker prefixes where applicable]
 -- Frame 1 --
-[Raw OCR text for frame 1 OR <<< SAME_AS_PREVIOUS >>> OR <<< PREVIOUS_PLUS >>>\nNewContent1]
+[Raw OCR text for frame 1 OR `F:0` OR `F:0 + "\nNewContent1"`]
 ...
 -- Frame N-1 --
-[Raw OCR text for frame N-1 OR <<< SAME_AS_PREVIOUS >>> OR <<< PREVIOUS_PLUS >>>\nNewContentN-1]
+[Raw OCR text for frame N-1 OR `F:N-2` OR `F:N-2 + "\nNewContentN-1"`]
 
 ==== TASK 2: Augmented Imperfections (List of N strings) ====
 -- Frame 0 --
 [Augmented OCR text for frame 0, preserving speaker prefixes]
 -- Frame 1 --
-[Augmented OCR text for frame 1 OR <<< SAME_AS_PREVIOUS >>> OR <<< PREVIOUS_PLUS >>>\nNewAugContent1]
+[Augmented OCR text for frame 1 OR `F:0` OR `F:0 + "\nNewAugContent1"`]
 ...
 -- Frame N-1 --
-[Augmented OCR text for frame N-1 OR <<< SAME_AS_PREVIOUS >>> OR <<< PREVIOUS_PLUS >>>\nNewAugContentN-1]
+[Augmented OCR text for frame N-1 OR `F:N-2` OR `F:N-2 + "\nNewAugContentN-1"`]
 
 ==== TASK 3: Cleaned OCR Text (List of N strings) ====
 -- Frame 0 --
 [Cleaned OCR text for frame 0, preserving/refining speaker prefixes]
 -- Frame 1 --
-[Cleaned OCR text for frame 1 OR <<< SAME_AS_PREVIOUS >>> OR <<< PREVIOUS_PLUS >>>\nNewCleanedContent1]
+[Cleaned OCR text for frame 1 OR `F:0` OR `F:0 + "\nNewCleanedContent1"`]
 ...
 -- Frame N-1 --
-[Cleaned OCR text for frame N-1 OR <<< SAME_AS_PREVIOUS >>> OR <<< PREVIOUS_PLUS >>>\nNewCleanedContentN-1]
+[Cleaned OCR text for frame N-1 OR `F:N-2` OR `F:N-2 + "\nNewCleanedContentN-1"`]
 
 ==== TASK 4: Structured Markdown Output (List of N Markdown blocks) ====
 -- Frame 0 --
 [Markdown analysis block for frame 0, using prefixes only for attributable text in Key Text Elements]
 -- Frame 1 --
-[Markdown analysis block for frame 1 OR <<< SAME_AS_PREVIOUS >>> OR <<< PREVIOUS_PLUS >>>\nNewMarkdownContent1]
+[Markdown analysis block for frame 1 OR `F:0` OR `F:0 + "\nNewMarkdownContent1"`]
 ...
 -- Frame N-1 --
-[Markdown analysis block for frame N-1 OR <<< SAME_AS_PREVIOUS >>> OR <<< PREVIOUS_PLUS >>>\nNewMarkdownContentN-1]
+[Markdown analysis block for frame N-1 OR `F:N-2` OR `F:N-2 + "\nNewMarkdownContentN-1"`]
 
 ==== TASK 5: Narrative Summary (Single Block for the Sequence) ====
 [Narrative summary covering the N-frame sequence]
@@ -138,7 +137,7 @@ The placeholders `<<< SAME_AS_PREVIOUS >>>` or `<<< PREVIOUS_PLUS >>>\n[NewConte
 
 --- Reference Few-Shot Examples (Illustrating Task Detail, Format, Redundancy, and Appending) ---
 
-**IMPORTANT NOTE:** The following few-shot examples demonstrate the desired LEVEL OF DETAIL and FORMATTING, **including the new placeholders and updated speaker attribution**. They are illustrative and based on simulating gradual changes over sequences.
+**IMPORTANT NOTE:** The following few-shot examples demonstrate the desired LEVEL OF DETAIL and FORMATTING, **including the new frame reference notation (F:N) and updated speaker attribution**. They are illustrative and based on simulating gradual changes over sequences.
 
 When applying this prompt to a **real sequence of video frames**:
 - **Tasks 1-4** should be generated *for each individual frame*, using the placeholders and specified speaker attribution where applicable.
@@ -157,17 +156,13 @@ Microsoft Teams – Meeting: Pieces AI OCR Sync (Active Chat Area)
 Speaker: Antreas 10:06AM: "Can everyone confirm the progress on today's OCR tests?"
 Windows 11 Taskbar: Teams (active) | Outlook | VSCode | Chrome | 10:16 AM
 -- Frame 1 --
-<<< PREVIOUS_PLUS >>>
-Speaker: Nina 10:07AM: "Tests mostly passed, minor augmentation discrepancies noted again."
+F:0 + "\nSpeaker: Nina 10:07AM: \"Tests mostly passed, minor augmentation discrepancies noted again.\""
 -- Frame 2 --
-<<< PREVIOUS_PLUS >>>
-Speaker1 (Image: male, glasses, dark hair): 10:08AM: "I'll check those augmentations later today. Ryan is double-checking too."
+F:1 + "\nSpeaker1 (Image: male, glasses, dark hair): 10:08AM: \"I'll check those augmentations later today. Ryan is double-checking too.\""
 -- Frame 3 --
-<<< SAME_AS_PREVIOUS >>>
+F:2
 -- Frame 4 --
-<<< PREVIOUS_PLUS >>>
-Speaker: Ryan 10:09AM: "Yes, Speaker1 and I will sync offline."
-[Nina is typing...]
+F:3 + "\nSpeaker: Ryan 10:09AM: \"Yes, Speaker1 and I will sync offline.\"\n[Nina is typing...]"
 
 ==== TASK 2: Augmented Imperfections (List of 5 strings) ====
 -- Frame 0 --
@@ -188,7 +183,7 @@ Speaker1 (Image: male, glasses, dark hair): 10:08AM: "I'll check those augmentat
 Windows 11 Taskbar: Teams (active) | Outlook | VSCode | Chrome | 10:16 AM
 // Omitted: Speaker: Nina 10:07AM...
 -- Frame 3 --
-<<< SAME_AS_PREVIOUS >>>
+F:2
 -- Frame 4 --
 Microsoft Teams – Meeting: Pieces AI OCR Sync (Active Chat Area)
 Speaker: Antreas 10:06AM: "Can everyone confirm the progress on today's OCR tests?"
@@ -205,17 +200,13 @@ Microsoft Teams – Meeting: Pieces AI OCR Sync (Active Chat Area)
 Speaker: Antreas 10:06AM: "Can everyone confirm the progress on today's OCR tests?"
 Windows 11 Taskbar: Teams (active) | Outlook | VSCode | Chrome | 10:16 AM
 -- Frame 1 --
-<<< PREVIOUS_PLUS >>>
-Speaker: Nina 10:07AM: "Tests mostly passed, minor augmentation discrepancies noted again."
+F:0 + "\nSpeaker: Nina 10:07AM: \"Tests mostly passed, minor augmentation discrepancies noted again.\""
 -- Frame 2 --
-<<< PREVIOUS_PLUS >>>
-Speaker1 (Image: male, glasses, dark hair): 10:08AM: "I'll check those augmentations later today. Ryan is double-checking too."
+F:1 + "\nSpeaker1 (Image: male, glasses, dark hair): 10:08AM: \"I'll check those augmentations later today. Ryan is double-checking too.\""
 -- Frame 3 --
-<<< SAME_AS_PREVIOUS >>>
+F:2
 -- Frame 4 --
-<<< PREVIOUS_PLUS >>>
-Speaker: Ryan 10:09AM: "Yes, Speaker1 and I will sync offline."
-[Nina is typing...]
+F:3 + "\nSpeaker: Ryan 10:09AM: \"Yes, Speaker1 and I will sync offline.\"\n[Nina is typing...]"
 
 ==== TASK 4: Structured Markdown Output (List of 5 Markdown blocks) ====
 -- Frame 0 --
@@ -229,41 +220,13 @@ Speaker: Ryan 10:09AM: "Yes, Speaker1 and I will sync offline."
 #### Inferred Action/Topic: Start of a Teams chat review, initial question posted.
 ```
 -- Frame 1 --
-<<< PREVIOUS_PLUS >>>
-```markdown
-#### Key Text Elements:
-- Speaker: Antreas (10:06AM), Text: "Can everyone confirm the progress on today's OCR tests?"
-- Speaker: Nina (10:07AM), Text: "Tests mostly passed, minor augmentation discrepancies noted again."
-- Teams (active) | Outlook | VSCode | Chrome | 10:16 AM (Taskbar Text)
-#### Visible UI Elements: Teams chat window (implied), Taskbar
-#### Inferred Action/Topic: Reading Nina's response in the Teams chat about OCR test status.
-```
+F:0 + "\n```markdown\n#### Key Text Elements:\n- Speaker: Antreas (10:06AM), Text: \"Can everyone confirm the progress on today's OCR tests?\"\n- Speaker: Nina (10:07AM), Text: \"Tests mostly passed, minor augmentation discrepancies noted again.\"\n- Teams (active) | Outlook | VSCode | Chrome | 10:16 AM (Taskbar Text)\n#### Visible UI Elements: Teams chat window (implied), Taskbar\n#### Inferred Action/Topic: Reading Nina's response in the Teams chat about OCR test status.\n```"
 -- Frame 2 --
-<<< PREVIOUS_PLUS >>>
-```markdown
-#### Key Text Elements:
-- Speaker: Antreas (10:06AM), Text: "Can everyone confirm the progress on today's OCR tests?"
-- Speaker: Nina (10:07AM), Text: "Tests mostly passed, minor augmentation discrepancies noted again."
-- Speaker1 (Image: male, glasses, dark hair, 10:08AM), Text: "I'll check those augmentations later today. Ryan is double-checking too."
-- Teams (active) | Outlook | VSCode | Chrome | 10:16 AM (Taskbar Text)
-#### Visible UI Elements: Teams chat window (implied), Taskbar
-#### Inferred Action/Topic: Reading Speaker1's response in the Teams chat.
-```
+F:1 + "\n```markdown\n#### Key Text Elements:\n- Speaker: Antreas (10:06AM), Text: \"Can everyone confirm the progress on today's OCR tests?\"\n- Speaker: Nina (10:07AM), Text: \"Tests mostly passed, minor augmentation discrepancies noted again.\"\n- Speaker1 (Image: male, glasses, dark hair, 10:08AM), Text: \"I'll check those augmentations later today. Ryan is double-checking too.\"\n- Teams (active) | Outlook | VSCode | Chrome | 10:16 AM (Taskbar Text)\n#### Visible UI Elements: Teams chat window (implied), Taskbar\n#### Inferred Action/Topic: Reading Speaker1's response in the Teams chat.\n```"
 -- Frame 3 --
-<<< SAME_AS_PREVIOUS >>>
+F:2
 -- Frame 4 --
-<<< PREVIOUS_PLUS >>>
-```markdown
-#### Key Text Elements:
-- Speaker: Antreas (10:06AM), Text: "Can everyone confirm the progress on today's OCR tests?"
-- Speaker: Nina (10:07AM), Text: "Tests mostly passed, minor augmentation discrepancies noted again."
-- Speaker1 (Image: male, glasses, dark hair, 10:08AM), Text: "I'll check those augmentations later today. Ryan is double-checking too."
-- Speaker: Ryan (10:09AM), Text: "Yes, Speaker1 and I will sync offline."
-- [Nina is typing...] (Typing Indicator Text)
-- Teams (active) | Outlook | VSCode | Chrome | 10:16 AM (Taskbar Text)
-#### Visible UI Elements: Teams chat window (implied), Taskbar, Typing indicator
-#### Inferred Action/Topic: Reading Ryan's confirmation and seeing Nina typing.
-```
+F:3 + "\n```markdown\n#### Key Text Elements:\n- Speaker: Antreas (10:06AM), Text: \"Can everyone confirm the progress on today's OCR tests?\"\n- Speaker: Nina (10:07AM), Text: \"Tests mostly passed, minor augmentation discrepancies noted again.\"\n- Speaker1 (Image: male, glasses, dark hair, 10:08AM), Text: \"I'll check those augmentations later today. Ryan is double-checking too.\"\n- Speaker: Ryan (10:09AM), Text: \"Yes, Speaker1 and I will sync offline.\"\n- [Nina is typing...] (Typing Indicator Text)\n- Teams (active) | Outlook | VSCode | Chrome | 10:16 AM (Taskbar Text)\n#### Visible UI Elements: Teams chat window (implied), Taskbar, Typing indicator\n#### Inferred Action/Topic: Reading Ryan's confirmation and seeing Nina typing.\n```"
 
 ==== TASK 5: Narrative Summary (Single Block for the Sequence) ====
 (This summary covers the simulated 5-frame sequence)
