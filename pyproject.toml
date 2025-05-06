@@ -29,6 +29,7 @@ dependencies = [
     "vllm", # For local high-throughput inference (NOTE: complex installation)
     "fire", # For command-line interface creation
     "tqdm", # Added for progress bars
+    "pytesseract", # Added for Tesseract OCR wrapper
     # "pydantic", # REMOVED
     # "pydantic-settings", # REMOVED
     # Add other core dependencies here later (e.g., google-genai)

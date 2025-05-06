@@ -11,6 +11,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import fire
 from tqdm import tqdm
+from google.genai.types import CountTokensResponse
 
 # from rich import print # Removed unused import
 
@@ -62,38 +63,25 @@ def calculate_gemini_cost(
     """
     # Rates per 1 million tokens in USD.
 
-    if model_name == "gemini-2.5-pro-exp-03-25":
-        logging.debug(f"Model {model_name} is free tier. Cost: $0.00")
-        return 0.0
-
-    # Pricing map: model -> (input_low, output_low, input_high, output_high, threshold_k)
-    # Low rates apply <= threshold_k input tokens.
-    # Thresholds are in thousands of tokens (e.g., 128k, 200k).
-    pricing_map = {
-        # Gemini 1.5 Pro (Adjust rates/threshold if official pricing differs)
-        "gemini-1.5-pro-latest": (3.50, 10.50, 7.00, 21.00, 128),  # Threshold 128k
-        # Gemini 1.5 Flash (Adjust rates/threshold)
-        "gemini-1.5-flash-latest": (0.35, 1.05, 0.70, 2.10, 128),  # Threshold 128k
-        # Gemini 2.5 Pro Preview (Paid Tier - from user table)
-        "gemini-2.5-pro-paid": (1.25, 10.00, 2.50, 15.00, 200),  # Threshold 200k
-    }
-
-    if model_name not in pricing_map:
-        logging.warning(
-            f"Pricing not defined for model '{model_name}'. Assuming $0.00 cost."
-        )  # Wrapped long line
-        return 0.0
-
     (
         input_rate_low,
         output_rate_low,
         input_rate_high,
         output_rate_high,
         threshold_k,
-    ) = pricing_map[model_name]
+    ) = (
+        1.25,
+        10.00,
+        2.50,
+        15.00,
+        200,
+    )
 
     threshold = threshold_k * 1000  # Convert k to actual token count
-
+    if isinstance(input_tokens, CountTokensResponse):
+        input_tokens = input_tokens.total_tokens
+    if isinstance(output_tokens, CountTokensResponse):
+        output_tokens = output_tokens.total_tokens
     if input_tokens <= threshold:
         input_rate = input_rate_low
         output_rate = output_rate_low

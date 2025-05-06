@@ -169,7 +169,7 @@ def process_image_sequence(
         num_input_tokens = client.models.count_tokens(
             model=MODEL_NAME,
             contents=parts_list,
-        )
+        ).total_tokens
         text_response = ""
         for chunk in client.models.generate_content_stream(
             model=MODEL_NAME,
@@ -183,7 +183,7 @@ def process_image_sequence(
         num_output_tokens = client.models.count_tokens(
             model=MODEL_NAME,
             contents=text_response,
-        )
+        ).total_tokens
         if print_counts:
             print(f"--- Input Tokens: {num_input_tokens}")
             print(f"--- Output Tokens: {num_output_tokens}")
@@ -383,7 +383,11 @@ if __name__ == "__main__":
     )
     start_time = time.time()
     raw_response, num_input_tokens, num_output_tokens = process_image_sequence(
-        gemini_vertex_client, sample_image_paths, prompt  # Pass client object
+        gemini_vertex_client,
+        sample_image_paths,
+        prompt,
+        print_output=True,
+        print_counts=True,
     )
     end_time = time.time()
     duration = end_time - start_time

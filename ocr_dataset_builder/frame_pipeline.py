@@ -5,6 +5,7 @@ import sys
 import time
 from pathlib import Path
 
+import fire  # Import fire for CLI
 from tqdm import tqdm
 from rich import print
 
@@ -54,6 +55,8 @@ def _process_single_video_dir(
     input_root: Path,
     output_root: Path,
     target_fps: int,
+    max_dimension: int | None,
+    max_frames_per_video: int | None,
 ) -> tuple[str, int | None, str]:
     """Helper function to process a single video directory."""
     dir_name = video_dir.name
@@ -91,11 +94,13 @@ def _process_single_video_dir(
         else:
             logging.warning(f"  No .info.json metadata file found for {dir_name}")
 
-        # Now extract frames
+        # Now extract frames, passing max_dimension and max_frames_per_video
         extracted_paths = extract_frames(
             str(video_file),
             str(output_video_frames_dir),
             target_fps=target_fps,
+            max_dimension=max_dimension,
+            max_frames_per_video=max_frames_per_video,
         )
 
         if extracted_paths:
@@ -107,7 +112,11 @@ def _process_single_video_dir(
             status_suffix = (
                 " (Metadata OK)" if metadata_copied else " (Metadata MISSING/ERROR)"
             )
-            return (dir_name, 0, "Extraction failed/0 frames" + status_suffix)
+            return (
+                dir_name,
+                0,
+                "Extraction/Sampling resulted in 0 frames" + status_suffix,
+            )
 
     except Exception as e:
         logging.error(f"Error in worker for {dir_name}: {e}", exc_info=False)
@@ -118,6 +127,8 @@ def process_dataset_videos(
     input_root_dir: str | Path,
     output_root_dir: str | Path,
     target_fps: int = 1,
+    max_dimension: int | None = 1024,
+    max_frames_per_video: int | None = None,
     start_index: int | None = None,
     end_index: int | None = None,
     max_workers: int | None = None,  # Number of parallel processes
@@ -129,6 +140,9 @@ def process_dataset_videos(
         input_root_dir: Root directory containing video subdirectories.
         output_root_dir: Root directory for saving extracted frames.
         target_fps: Target frames per second for extraction.
+        max_dimension: Max dimension (width or height) for frame resizing.
+                       Set to None or 0 to disable resizing. Defaults to 1024.
+        max_frames_per_video: Max frames to randomly sample per video (default None=All).
         start_index: 0-based index of the first video directory to process.
                      Defaults to 0 if None.
         end_index: 0-based index after the last directory to process.
@@ -144,6 +158,15 @@ def process_dataset_videos(
 
     logging.info(f"Starting video processing from: {input_root}")
     logging.info(f"Outputting frames to: {output_root}")
+    logging.info(f"Target FPS: {target_fps}")  # Log target FPS
+    if max_dimension and max_dimension > 0:
+        logging.info(f"Max frame dimension: {max_dimension}px")
+    else:
+        logging.info("Frame resizing disabled.")
+    if max_frames_per_video and max_frames_per_video > 0:
+        logging.info(f"Max frames per video (sampling): {max_frames_per_video}")
+    else:
+        logging.info("Frame sampling disabled.")
 
     # Get sorted list of directories
     video_dirs = sorted([d for d in input_root.iterdir() if d.is_dir()])
@@ -184,7 +207,7 @@ def process_dataset_videos(
     successful_count = 0
     failed_count = 0
     no_video_count = 0
-    total_frames_extracted = 0
+    total_frames_saved = 0
     start_time = time.time()
 
     futures = []
@@ -197,6 +220,8 @@ def process_dataset_videos(
                 input_root,
                 output_root,
                 target_fps,
+                max_dimension,
+                max_frames_per_video,
             )
             futures.append(future)
 
@@ -216,23 +241,12 @@ def process_dataset_videos(
                 processed_count += 1
                 if status.startswith("Success") and frame_count_or_none is not None:
                     successful_count += 1
-                    total_frames_extracted += frame_count_or_none
-                    # Temporarily disable per-dir logging to avoid tqdm interference
-                    # logging.info(
-                    #     f"Dir {dir_name}: OK ({frame_count_or_none} frames)"
-                    # )
+                    total_frames_saved += frame_count_or_none
                 elif status == "No video file found":
                     no_video_count += 1
-                    # logging.warning(f"Dir {dir_name}: SKIPPED (no video found)")
-                else:  # Handles errors and extraction failures
+                else:
                     failed_count += 1
-                    # logging.error(f"Dir {dir_name}: FAILED ({status})")
-
-                # Optionally update tqdm description
-                # progress_bar.set_description(f"Processed {dir_name[:20]}...")
             except Exception as exc:
-                # This catches errors in future.result() itself, though unlikely
-                # if _process_single_video_dir handles its exceptions.
                 failed_count += 1
                 logging.error(f"Error retrieving result for a task: {exc}")
 
@@ -245,38 +259,10 @@ def process_dataset_videos(
     logging.info(f"  Successful: {successful_count} directories")
     logging.info(f"  Skipped (No Video): {no_video_count} directories")
     logging.info(f"  Failed: {failed_count} directories")
-    logging.info(f"  Total Frames Extracted: {total_frames_extracted}")
+    logging.info(f"  Total Frames Saved: {total_frames_saved}")
     logging.info(f"  Total processing time: {duration:.2f} seconds.")
 
 
 if __name__ == "__main__":
-    # --- Configuration for example run ---
-    INPUT_DATASET_PATH = "/mnt/nvme-fast0/datasets/pieces/pieces-ocr-v-0-1-0/"
-    OUTPUT_FRAMES_PATH = "./extracted_frames"
-    TARGET_FPS = 1
-    START_INDEX = 0
-    END_INDEX = 10  # Process first 10 dirs (0-9)
-    MAX_WORKERS = 4  # Adjust based on your CPU cores (e.g., os.cpu_count())
-    # Set to None to use default (usually core count)
-
-    print("Running pipeline example (concurrently):")
-    print(f" Input Dir:   {INPUT_DATASET_PATH}")
-    print(f" Output Dir:  {OUTPUT_FRAMES_PATH}")
-    print(f" Target FPS:  {TARGET_FPS}")
-    print(f" Start Index: {START_INDEX if START_INDEX is not None else '0'}")
-    print(f" End Index:   {END_INDEX if END_INDEX is not None else 'All'}")
-    print(f" Max Workers: {MAX_WORKERS if MAX_WORKERS is not None else 'Default'}")
-    print("---")
-
-    if not Path(INPUT_DATASET_PATH).is_dir():
-        print(f"ERROR: Input dataset dir not found: {INPUT_DATASET_PATH}")
-        print("Please update INPUT_DATASET_PATH.")
-    else:
-        process_dataset_videos(
-            INPUT_DATASET_PATH,
-            OUTPUT_FRAMES_PATH,
-            target_fps=TARGET_FPS,
-            start_index=START_INDEX,
-            end_index=END_INDEX,
-            max_workers=MAX_WORKERS,  # Pass max_workers
-        )
+    # Use fire to create a CLI interface
+    fire.Fire(process_dataset_videos)

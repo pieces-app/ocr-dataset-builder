@@ -74,13 +74,13 @@ def generate():
         model=model,
         contents=contents,
     )
-    print(f"Number of count input tokens: {num_count_tokens}")
+    print(f"Number of count input tokens: {num_count_tokens.total_tokens}")
 
     num_output_tokens = client.models.count_tokens(
         model=model,
         contents=output_text,
     )
-    print(f"Number of count output tokens: {num_output_tokens}")
+    print(f"Number of count output tokens: {num_output_tokens.total_tokens}")
 
 
 generate()
