@@ -101,7 +101,7 @@ line-ending = "auto"
 [tool.poe.tasks]
 format = [
     { cmd = "isort ocr_dataset_builder/ tests/" },
-    { cmd = "black --line-length 88 ocr_dataset_builder/ tests/" },
+    { cmd = "black --line-length 79 ocr_dataset_builder/ tests/" },
     { cmd = "autoflake --in-place --remove-all-unused-imports --recursive ocr_dataset_builder/ tests/" },
 ]
 linter = "ruff check ocr_dataset_builder/ tests/"

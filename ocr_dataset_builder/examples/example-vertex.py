@@ -41,14 +41,18 @@ def generate():
         max_output_tokens=20000,
         response_modalities=["TEXT"],
         safety_settings=[
-            types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
+            types.SafetySetting(
+                category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"
+            ),
             types.SafetySetting(
                 category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"
             ),
             types.SafetySetting(
                 category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="OFF"
             ),
-            types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF"),
+            types.SafetySetting(
+                category="HARM_CATEGORY_HARASSMENT", threshold="OFF"
+            ),
         ],
         thinking_config=types.ThinkingConfig(
             include_thoughts=True,

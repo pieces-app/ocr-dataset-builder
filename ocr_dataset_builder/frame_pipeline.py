@@ -26,7 +26,13 @@ logging.basicConfig(
     handlers=[RichHandler(rich_tracebacks=True, markup=True, show_path=False)],
 )
 
-VIDEO_EXTENSIONS = [".mp4", ".webm", ".mkv", ".avi", ".mov"]  # Add more if needed
+VIDEO_EXTENSIONS = [
+    ".mp4",
+    ".webm",
+    ".mkv",
+    ".avi",
+    ".mov",
+]  # Add more if needed
 
 
 def find_video_file(directory: Path) -> Path | None:
@@ -78,13 +84,17 @@ def _process_single_video_dir(
 
         # Determine mirrored output directory path using absolute input_root and relative_path
         # relative_path_obj = video_dir_absolute_path.relative_to(input_root) # This was how it was done before
-        output_video_frames_dir = output_root / video_dir_relative_path  # Simpler now
+        output_video_frames_dir = (
+            output_root / video_dir_relative_path
+        )  # Simpler now
         # extract_frames will create this directory
 
         if metadata_file:
             try:
                 output_video_frames_dir.mkdir(parents=True, exist_ok=True)
-                target_metadata_path = output_video_frames_dir / metadata_file.name
+                target_metadata_path = (
+                    output_video_frames_dir / metadata_file.name
+                )
                 shutil.copy2(metadata_file, target_metadata_path)
                 metadata_copied = True
                 logging.debug(  # Reduced log level for less noise
@@ -109,7 +119,9 @@ def _process_single_video_dir(
         )
 
         status_suffix = (
-            " (Metadata OK)" if metadata_copied else " (Metadata MISSING/ERROR)"
+            " (Metadata OK)"
+            if metadata_copied
+            else " (Metadata MISSING/ERROR)"
         )
         if extracted_paths:
             return (
@@ -126,7 +138,8 @@ def _process_single_video_dir(
 
     except Exception as e:
         logging.error(
-            f"Error in worker for {video_dir_relative_path}: {e}", exc_info=False
+            f"Error in worker for {video_dir_relative_path}: {e}",
+            exc_info=False,
         )
         # Return relative path for consistency
         return (video_dir_relative_path, None, f"Error: {e}")
@@ -179,7 +192,9 @@ def process_dataset_videos(
     else:
         logging.info("Frame resizing disabled.")
     if max_frames_per_video and max_frames_per_video > 0:
-        logging.info(f"Max frames per video (sampling): {max_frames_per_video}")
+        logging.info(
+            f"Max frames per video (sampling): {max_frames_per_video}"
+        )
     else:
         logging.info("Frame sampling disabled.")
 
@@ -205,7 +220,8 @@ def process_dataset_videos(
         [d for d in input_root.iterdir() if d.is_dir()]
     )
     all_potential_dirs_relative = [
-        d.relative_to(input_root).as_posix() for d in all_potential_dirs_absolute
+        d.relative_to(input_root).as_posix()
+        for d in all_potential_dirs_absolute
     ]
 
     logging.info(
@@ -219,7 +235,9 @@ def process_dataset_videos(
         for path_str in processed_dirs_from_checkpoint
         if (input_root / path_str).is_dir()  # Check existence using full path
     }
-    if len(valid_processed_relative_paths) < len(processed_dirs_from_checkpoint):
+    if len(valid_processed_relative_paths) < len(
+        processed_dirs_from_checkpoint
+    ):
         logging.info(
             f"{len(processed_dirs_from_checkpoint) - len(valid_processed_relative_paths)} "
             f"stale directory paths removed from checkpoint list."
@@ -240,7 +258,9 @@ def process_dataset_videos(
     # Determine the slice based on the list of directories to consider
     total_dirs_to_consider = len(relative_dirs_to_consider)
     actual_start_index = start_index if start_index is not None else 0
-    actual_end_index = end_index if end_index is not None else total_dirs_to_consider
+    actual_end_index = (
+        end_index if end_index is not None else total_dirs_to_consider
+    )
 
     # Validate indices against the list to consider
     if not (
@@ -282,7 +302,9 @@ def process_dataset_videos(
     )
 
     processed_count = 0
-    successful_run_count = 0  # Renamed from successful_count to avoid confusion
+    successful_run_count = (
+        0  # Renamed from successful_count to avoid confusion
+    )
     failed_run_count = 0  # Renamed
     no_video_run_count = 0  # Renamed
     total_frames_saved_this_run = 0  # Renamed
@@ -292,7 +314,9 @@ def process_dataset_videos(
     if not max_workers:  # Handle default for max_workers if None
         max_workers = os.cpu_count()
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+    with concurrent.futures.ProcessPoolExecutor(
+        max_workers=max_workers
+    ) as executor:
         # Iterate over the relative paths, get absolute path from map for submission
         for rel_path in sliced_relative_dirs_for_this_run:
             abs_path = absolute_dirs_for_this_run_map[rel_path]
@@ -319,7 +343,9 @@ def process_dataset_videos(
         for future in progress_bar:
             try:
                 # dir_name here is the relative_path from _process_single_video_dir
-                returned_relative_path, frame_count_or_none, status = future.result()
+                returned_relative_path, frame_count_or_none, status = (
+                    future.result()
+                )
                 processed_count += 1
 
                 if status.startswith("Success"):
@@ -330,7 +356,9 @@ def process_dataset_videos(
                     try:
                         with open(checkpoint_path, "a") as cp_file:
                             cp_file.write(f"{returned_relative_path}\n")
-                        logging.debug(f"Checkpointed: {returned_relative_path}")
+                        logging.debug(
+                            f"Checkpointed: {returned_relative_path}"
+                        )
                     except Exception as cp_e:
                         logging.error(
                             f"Failed to write to checkpoint file {checkpoint_path} for {returned_relative_path}: {cp_e}"
@@ -348,7 +376,9 @@ def process_dataset_videos(
                 failed_run_count += 1
                 # How to get dir_name if future failed before returning? This is tricky.
                 # For now, just log the exception. The dir won't be checkpointed.
-                logging.error(f"A task in the executor failed: {exc}", exc_info=True)
+                logging.error(
+                    f"A task in the executor failed: {exc}", exc_info=True
+                )
 
     end_time = time.time()
     duration = end_time - start_time
@@ -357,9 +387,13 @@ def process_dataset_videos(
     logging.info(
         f"Successfully processed & saved frames for: {successful_run_count} directories"
     )
-    logging.info(f"Skipped (no video file found): {no_video_run_count} directories")
+    logging.info(
+        f"Skipped (no video file found): {no_video_run_count} directories"
+    )
     logging.info(f"Failed during processing: {failed_run_count} directories")
-    logging.info(f"Total frames saved in this run: {total_frames_saved_this_run}")
+    logging.info(
+        f"Total frames saved in this run: {total_frames_saved_this_run}"
+    )
     logging.info(f"Total processing time: {duration:.2f} seconds")
     logging.info(
         f"See {checkpoint_path} for a list of successfully completed directories."

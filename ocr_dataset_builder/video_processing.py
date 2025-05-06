@@ -90,7 +90,9 @@ def extract_frames(
     else:
         logging.info("Resizing disabled (max_dimension=None)")
     if max_frames_per_video:
-        logging.info(f"Sampling enabled: Max {max_frames_per_video} frames per video.")
+        logging.info(
+            f"Sampling enabled: Max {max_frames_per_video} frames per video."
+        )
     else:
         logging.info("Sampling disabled (max_frames_per_video=None)")
 
@@ -108,7 +110,9 @@ def extract_frames(
         )
         native_fps = 30
 
-    logging.info(f"Video Native FPS: {native_fps:.2f}, Target: {target_fps} FPS")
+    logging.info(
+        f"Video Native FPS: {native_fps:.2f}, Target: {target_fps} FPS"
+    )
     if total_frames_estimate > 0:
         logging.info(f"Estimated total frames: {total_frames_estimate}")
     else:
@@ -118,7 +122,9 @@ def extract_frames(
     if target_fps > 0 and target_fps < native_fps:
         frame_interval = int(round(native_fps / target_fps))
     elif target_fps <= 0:
-        logging.warning("Target FPS must be positive. Defaulting to every frame.")
+        logging.warning(
+            "Target FPS must be positive. Defaulting to every frame."
+        )
         frame_interval = 1
 
     logging.info(f"Extracting every {frame_interval}-th frame.")
@@ -142,7 +148,9 @@ def extract_frames(
 
         if frame_count % frame_interval == 0:
             if frame is None or frame.size == 0:
-                logging.warning(f"Frame {frame_count} empty/invalid, skipping.")
+                logging.warning(
+                    f"Frame {frame_count} empty/invalid, skipping."
+                )
                 frame_count += 1
                 continue
 
@@ -160,10 +168,14 @@ def extract_frames(
                     scale = max_dimension / current_max_dim
                     new_width = int(width * scale)
                     new_height = int(height * scale)
-                    interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+                    interpolation = (
+                        cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+                    )
                     try:
                         resized_frame = cv2.resize(
-                            frame, (new_width, new_height), interpolation=interpolation
+                            frame,
+                            (new_width, new_height),
+                            interpolation=interpolation,
                         )
                         frame_to_process = resized_frame
                     except Exception as resize_e:
@@ -281,7 +293,9 @@ if __name__ == "__main__":
     print(
         f"--- Max Dimension: {test_max_dimension if test_max_dimension else 'Original'}"
     )
-    print(f"--- Max Frames/Vid: {test_max_frames if test_max_frames else 'All'}")
+    print(
+        f"--- Max Frames/Vid: {test_max_frames if test_max_frames else 'All'}"
+    )
     print("--- Ensure input video path is correct before proceeding. ---")
 
     video_file = Path(test_video_path)
@@ -300,11 +314,17 @@ if __name__ == "__main__":
         if extracted_paths:
             output_dir_path = Path(test_output_dir)
             total_frames_size_bytes = sum(
-                f.stat().st_size for f in output_dir_path.glob("**/*") if f.is_file()
+                f.stat().st_size
+                for f in output_dir_path.glob("**/*")
+                if f.is_file()
             )
-            frames_size_readable = get_human_readable_size(total_frames_size_bytes)
+            frames_size_readable = get_human_readable_size(
+                total_frames_size_bytes
+            )
 
-            print(f"\n✅ Saved {len(extracted_paths)} frames to {output_dir_path.name}")
+            print(
+                f"\n✅ Saved {len(extracted_paths)} frames to {output_dir_path.name}"
+            )
             print(f"--- Total frames size: {frames_size_readable}")
         else:
             print("\n❌ Frame extraction/saving failed or produced no frames.")

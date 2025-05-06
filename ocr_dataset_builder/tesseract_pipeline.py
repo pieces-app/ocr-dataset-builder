@@ -79,7 +79,9 @@ def _process_tesseract_directory(
             leave=False,
             ncols=100,
         ):
-            ocr_text = process_image_with_tesseract(frame_path, language=language)
+            ocr_text = process_image_with_tesseract(
+                frame_path, language=language
+            )
             if ocr_text is not None:
                 ocr_results[frame_path.name] = ocr_text
                 processed_count += 1
@@ -96,7 +98,8 @@ def _process_tesseract_directory(
 
     except Exception as e:
         logging.error(
-            f"Error in worker for {frame_dir_relative_path}: {e}", exc_info=False
+            f"Error in worker for {frame_dir_relative_path}: {e}",
+            exc_info=False,
         )
         return (frame_dir_relative_path, None, f"Error: {e}")
 
@@ -122,7 +125,9 @@ def run_tesseract_pipeline(
         end_index: 0-based index of the directory *after* the last one (after checkpoint).
         checkpoint_file_name: Log file for processed directories.
     """
-    from rich import print  # Keep import here due to conditional Tesseract check
+    from rich import (  # Keep import here due to conditional Tesseract check
+        print,
+    )
 
     print("--- Starting Tesseract OCR Pipeline --- ")
     if not check_tesseract_install():
@@ -167,7 +172,8 @@ def run_tesseract_pipeline(
         [d for d in input_root.iterdir() if d.is_dir()]
     )
     all_potential_frame_dirs_rel = [
-        d.relative_to(input_root).as_posix() for d in all_potential_frame_dirs_abs
+        d.relative_to(input_root).as_posix()
+        for d in all_potential_frame_dirs_abs
     ]
     logging.info(
         f"Found {len(all_potential_frame_dirs_rel)} potential frame directories in input."
@@ -178,7 +184,9 @@ def run_tesseract_pipeline(
         for path_str in processed_dirs_from_checkpoint
         if (input_root / path_str).is_dir()
     }
-    if len(valid_processed_relative_paths) < len(processed_dirs_from_checkpoint):
+    if len(valid_processed_relative_paths) < len(
+        processed_dirs_from_checkpoint
+    ):
         logging.info(
             f"{len(processed_dirs_from_checkpoint) - len(valid_processed_relative_paths)} "
             f"stale directory paths removed from checkpoint."
@@ -197,7 +205,9 @@ def run_tesseract_pipeline(
 
     total_dirs_to_consider = len(relative_dirs_to_consider)
     actual_start_index = start_index if start_index is not None else 0
-    actual_end_index = end_index if end_index is not None else total_dirs_to_consider
+    actual_end_index = (
+        end_index if end_index is not None else total_dirs_to_consider
+    )
     actual_start_index = max(0, actual_start_index)
     actual_end_index = min(total_dirs_to_consider, actual_end_index)
 
@@ -217,7 +227,9 @@ def run_tesseract_pipeline(
     target_count = len(sliced_relative_dirs_for_this_run)
 
     if target_count == 0:
-        logging.info("No frame directories selected for processing in this run.")
+        logging.info(
+            "No frame directories selected for processing in this run."
+        )
         return
 
     logging.info(
@@ -236,7 +248,9 @@ def run_tesseract_pipeline(
 
     logging.info(f"Submitting {target_count} tasks to ProcessPoolExecutor...")
     futures = []
-    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+    with concurrent.futures.ProcessPoolExecutor(
+        max_workers=max_workers
+    ) as executor:
         for rel_path in sliced_relative_dirs_for_this_run:
             abs_path = absolute_dirs_for_this_run_map[rel_path]
             future = executor.submit(
@@ -260,14 +274,19 @@ def run_tesseract_pipeline(
         for future in progress_bar:
             processed_dir_count_this_run += 1
             try:
-                returned_relative_path, frame_count_or_none, status = future.result()
-                is_success = frame_count_or_none is not None and status.startswith(
-                    "Success"
+                returned_relative_path, frame_count_or_none, status = (
+                    future.result()
+                )
+                is_success = (
+                    frame_count_or_none is not None
+                    and status.startswith("Success")
                 )
 
                 if is_success:
                     successful_dir_count_this_run += 1
-                    if frame_count_or_none is not None:  # Should be true if success
+                    if (
+                        frame_count_or_none is not None
+                    ):  # Should be true if success
                         total_frames_processed_this_run += frame_count_or_none
                     # --- Checkpoint Saving ---
                     try:
@@ -288,14 +307,17 @@ def run_tesseract_pipeline(
             except Exception as exc:
                 failed_dir_count_this_run += 1
                 logging.error(
-                    f"Error retrieving Tesseract dir result: {exc}", exc_info=True
+                    f"Error retrieving Tesseract dir result: {exc}",
+                    exc_info=True,
                 )
 
     end_time = time.time()
     duration = end_time - start_time
     print("--- Tesseract Pipeline Finished ---")
     logging.info(f"Total Dirs Targeted this run: {target_count}")
-    logging.info(f"Total Dirs Attempted this run: {processed_dir_count_this_run}")
+    logging.info(
+        f"Total Dirs Attempted this run: {processed_dir_count_this_run}"
+    )
     logging.info(f"Successful Dirs this run: {successful_dir_count_this_run}")
     logging.info(f"Failed/Partial Dirs this run: {failed_dir_count_this_run}")
     logging.info(

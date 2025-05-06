@@ -44,11 +44,15 @@ def check_tesseract_install() -> bool:
         )
         return False
     except Exception as e:
-        logging.error("Unexpected error during Tesseract version check: " f"{e}")
+        logging.error(
+            "Unexpected error during Tesseract version check: " f"{e}"
+        )
         return False
 
 
-def process_image_with_tesseract(image_path: Path, language: str = "eng") -> str | None:
+def process_image_with_tesseract(
+    image_path: Path, language: str = "eng"
+) -> str | None:
     """
     Processes a single image file using pytesseract to extract text.
 
@@ -89,7 +93,8 @@ def process_image_with_tesseract(image_path: Path, language: str = "eng") -> str
         return None
     except Exception as e:
         logging.error(
-            "Unexpected error during pytesseract process for " f"{image_path.name}: {e}"
+            "Unexpected error during pytesseract process for "
+            f"{image_path.name}: {e}"
         )
         return None
 
@@ -104,7 +109,9 @@ if __name__ == "__main__":
     if check_tesseract_install():
         print("\n--- Testing Pytesseract on a dummy/test image --- ")
         # Example path, ensure this or a similar test image exists for this check
-        test_image_dir = Path("temp_test_frames_sampled_png")  # Or any dir with frames
+        test_image_dir = Path(
+            "temp_test_frames_sampled_png"
+        )  # Or any dir with frames
         # Attempt to find any png in that dir for testing
         test_images = list(test_image_dir.glob("frame_*.png"))
         if not test_images:
@@ -120,8 +127,12 @@ if __name__ == "__main__":
                 print(f">>>\n{extracted_text}\n<<<")
                 print("----------------------")
             else:
-                print("\n[yellow]--- Pytesseract processing failed ---[/yellow]")
-                print("(Check Tesseract installation, image validity, and logs)")
+                print(
+                    "\n[yellow]--- Pytesseract processing failed ---[/yellow]"
+                )
+                print(
+                    "(Check Tesseract installation, image validity, and logs)"
+                )
         else:
             print(
                 f"\n[yellow]No test images found in {test_image_dir} to test OCR processing.[/yellow]"

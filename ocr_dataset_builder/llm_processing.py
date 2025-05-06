@@ -27,8 +27,12 @@ load_dotenv()
 MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-pro-exp-03-25")
 SAFETY_SETTINGS = [
     types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
-    types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
-    types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="OFF"),
+    types.SafetySetting(
+        category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"
+    ),
+    types.SafetySetting(
+        category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="OFF"
+    ),
     types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF"),
 ]
 # Generation Config Defaults (aligning with example-vertex.py)
@@ -85,7 +89,9 @@ def initialize_gemini_client() -> genai.Client | None:
         return None
     except Exception as e:
         # Catch potential auth or other init errors
-        logging.error(f"Error initializing Vertex AI Client: {e}", exc_info=True)
+        logging.error(
+            f"Error initializing Vertex AI Client: {e}", exc_info=True
+        )
         return None
 
 
@@ -119,7 +125,9 @@ def process_image_sequence(
     # Prepare the input parts list following the user-provided example structure
     # prompt_text string followed by image Parts created from bytes
     parts_list = [prompt_text]
-    for img_path_obj in map(Path, image_paths):  # Ensure paths are Path objects
+    for img_path_obj in map(
+        Path, image_paths
+    ):  # Ensure paths are Path objects
         try:
             logging.debug(f"Reading image bytes: {img_path_obj}")
 
@@ -141,14 +149,20 @@ def process_image_sequence(
                 image_bytes = f.read()
 
             # Create Part from bytes
-            image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+            image_part = types.Part.from_bytes(
+                data=image_bytes, mime_type=mime_type
+            )
             parts_list.append(image_part)
 
         except FileNotFoundError:
-            logging.error(f"Image file not found: {img_path_obj}. Skipping sequence.")
+            logging.error(
+                f"Image file not found: {img_path_obj}. Skipping sequence."
+            )
             return None
         except Exception as e:
-            logging.error(f"Error processing image {img_path_obj}: {e}", exc_info=True)
+            logging.error(
+                f"Error processing image {img_path_obj}: {e}", exc_info=True
+            )
             return None
 
     if len(parts_list) <= 1:  # Only prompt, no images added successfully
@@ -168,7 +182,9 @@ def process_image_sequence(
     )
 
     try:
-        logging.info(f"Sending request to model {MODEL_NAME} via Vertex AI Client...")
+        logging.info(
+            f"Sending request to model {MODEL_NAME} via Vertex AI Client..."
+        )
         # Call generate_content using the client.models attribute
         # Pass the list of parts directly as contents, following user example
         num_input_tokens = client.models.count_tokens(
@@ -286,7 +302,9 @@ def parse_llm_response(response_text: str) -> dict | None:
                 continue
 
         if not temp_frame_data:
-            logging.warning(f"No frames successfully parsed for Task {task_num}.")
+            logging.warning(
+                f"No frames successfully parsed for Task {task_num}."
+            )
             continue
 
         # Determine the max frame index found
@@ -294,7 +312,9 @@ def parse_llm_response(response_text: str) -> dict | None:
 
         # Populate the final list, handling redundancy
         for i in range(max_index + 1):
-            current_content = temp_frame_data.get(i, "")  # Get content or empty string
+            current_content = temp_frame_data.get(
+                i, ""
+            )  # Get content or empty string
 
             if current_content == redundancy_placeholder:
                 if i > 0 and len(parsed_data[task_key]) > 0:
@@ -309,7 +329,9 @@ def parse_llm_response(response_text: str) -> dict | None:
                     logging.warning(
                         f"Task {task_num}, Frame {i}: Invalid use of '{redundancy_placeholder}'. Appending empty."
                     )
-                    parsed_data[task_key].append("")  # Append empty string as fallback
+                    parsed_data[task_key].append(
+                        ""
+                    )  # Append empty string as fallback
             else:
                 # Regular content, just append it
                 parsed_data[task_key].append(current_content)
@@ -365,7 +387,9 @@ if __name__ == "__main__":
         exit()
 
     print(f"Using Prompt: {default_prompt_path}")
-    print(f"Using {len(sample_image_paths)} Sample Images from: {frame_source_dir}")
+    print(
+        f"Using {len(sample_image_paths)} Sample Images from: {frame_source_dir}"
+    )
 
     # 2. Load Prompt
     try:
@@ -398,7 +422,9 @@ if __name__ == "__main__":
     duration = end_time - start_time
 
     if raw_response:
-        print(f"--- Received Raw Response (API call took {duration:.2f}s) --- ")
+        print(
+            f"--- Received Raw Response (API call took {duration:.2f}s) --- "
+        )
 
         # 5. Parse Response
         print("\n--- Parsing Response --- ")
@@ -413,10 +439,18 @@ if __name__ == "__main__":
             print(
                 f"--- Parsed Output Summary (Parsing took {parse_duration:.3f}s) --- "
             )
-            print(f" Task 1 Frames: {len(parsed_output.get('task1_raw_ocr', []))}")
-            print(f" Task 2 Frames: {len(parsed_output.get('task2_augmented', []))}")
-            print(f" Task 3 Frames: {len(parsed_output.get('task3_cleaned', []))}")
-            print(f" Task 4 Frames: {len(parsed_output.get('task4_markdown', []))}")
+            print(
+                f" Task 1 Frames: {len(parsed_output.get('task1_raw_ocr', []))}"
+            )
+            print(
+                f" Task 2 Frames: {len(parsed_output.get('task2_augmented', []))}"
+            )
+            print(
+                f" Task 3 Frames: {len(parsed_output.get('task3_cleaned', []))}"
+            )
+            print(
+                f" Task 4 Frames: {len(parsed_output.get('task4_markdown', []))}"
+            )
             t5_summary = parsed_output.get("task5_summary", "")
             print(f" Task 5 Summary Length: {len(t5_summary)}")
             print(f"  Task 5 Summary Snippet: {t5_summary[:200]}...")
