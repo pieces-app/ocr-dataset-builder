@@ -1,0 +1,110 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ocr_dataset_builder"
+version = "0.1.0"
+description = "A tool to build OCR datasets from YouTube videos."
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    # "License :: OSI Approved :: MIT License", # REMOVED - Internal Project
+    "Operating System :: OS Independent",
+    "Development Status :: 3 - Alpha", # Added based on example
+    "Intended Audience :: Developers", # Added based on example
+    "Topic :: Utilities", # Adjusted topic
+]
+dependencies = [
+    "yt-dlp",
+    "python-dotenv", # For potentially loading .env before os.getenv
+    "requests", # Likely needed for API calls (LLM)
+    "rich", # For better console output
+    "openai>=1.0", # For LLM interaction (filtering)
+    "google-generativeai", # For Vertex AI / Gemini interaction (via Client(vertexai=True))
+    "google-genai", # For Vertex AI / Gemini interaction (via Client(vertexai=True))
+    # "google-cloud-aiplatform>=1.49", # Commented out - using genai client for vertex now
+    "opencv-python", # Added for video frame extraction
+    "vllm", # For local high-throughput inference (NOTE: complex installation)
+    "fire", # For command-line interface creation
+    "tqdm", # Added for progress bars
+    # "pydantic", # REMOVED
+    # "pydantic-settings", # REMOVED
+    # Add other core dependencies here later (e.g., google-genai)
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=6.0",          # Core testing framework
+    "pytest-xdist",         # For parallel test execution (-n flag)
+    "pytest-mock",          # For mocker fixture (unittest.mock integration)
+    "pytest-cov",           # For coverage reporting
+    "pytest-asyncio",       # For async test support
+    "pytest-sugar",         # For better test output
+]
+dev = [
+    "black>=23.0",          # Code formatter
+    "isort>=5.0",           # Import sorter
+    "ruff",                 # Linter & Formatter
+    "autoflake",            # Unused import/variable remover
+    "pytest",               # Include pytest here too for dev environments
+    "poethepoet",         # Task runner
+] # Develop dependencies for formatting/linting/testing tools
+
+
+[project.urls]
+"Homepage" = "https://github.com/pieces-app/ocr-dataset-builder"
+"Bug Tracker" = "https://github.com/pieces-app/ocr-dataset-builder/issues"
+
+# Specify the package directory
+[tool.setuptools.packages.find]
+where = ["."] # Look in the root directory
+include = ["ocr_dataset_builder*"] # Include the main package
+exclude = ["tests*"] # Exclude tests from the built package
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-n auto -v -s --color=yes --durations=10" # Parallel, verbose, show prints, color, slowest 10
+testpaths = [
+    "tests", # Directory where tests are located
+]
+pythonpath = ["."] # Add project root to python path for tests
+
+# Configuration for Black code formatter
+[tool.black]
+line-length = 88
+target-version = ['py39'] # Specify target Python versions
+
+# Configuration for isort import sorter
+[tool.isort]
+profile = "black"
+line_length = 88
+
+# Configuration for Ruff linter/formatter
+[tool.ruff]
+line-length = 88
+# Select rules (see Ruff docs for options)
+# Example: Enable Pyflakes (F), pycodestyle (E, W), isort (I)
+select = ["E", "W", "F", "I", "UP"] # UP enables pyupgrade rules
+ignore = [] # Add specific rule codes to ignore if needed
+
+# Ruff's formatter settings (can replace black if desired, but using both is common)
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# Define tasks using poe-the-poet
+[tool.poe.tasks]
+format = [
+    { cmd = "isort ocr_dataset_builder/ tests/" },
+    { cmd = "black --line-length 88 ocr_dataset_builder/ tests/" },
+    { cmd = "autoflake --in-place --remove-all-unused-imports --recursive ocr_dataset_builder/ tests/" },
+]
+linter = "ruff check ocr_dataset_builder/ tests/"
+
+# Optional: Entry point for the main script (can be added back later)
+# [project.scripts]
+# ocr-dataset-builder = "ocr_dataset_builder.main:main" 

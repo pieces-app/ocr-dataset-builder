@@ -1,0 +1,16 @@
+# Cursor Configuration for OCR Dataset Builder
+
+# Development Methodology Reminder:
+# This project uses Test-Driven Development (TDD) with AI assistance (Chamber).
+# Workflow: Discuss -> Plan -> Write Tests -> Implement -> Test -> Refactor -> Review -> Merge
+# Refer to docs/DEVELOPMENT.md for full details.
+
+# Coding Conventions Reminder:
+# - Use Absolute Imports (e.g., `from youtube_collector.module import ...`)
+# - Add `if __name__ == "__main__":` examples.
+# - Use `rich` for logging and tracebacks.
+# - Follow linting/formatting rules (`poe check`).
+
+# Testing Philosophy
+Prioritize minimal tests focused on the critical execution path.
+Avoid mocks and patches where possible; prefer testing code directly by invoking real functions and controlling external interactions at the boundary if necessary. Test the actual integration and logic flow rather than isolated units with heavy mocking. 
