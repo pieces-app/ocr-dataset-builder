@@ -8,10 +8,14 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from rich import print
+from rich.logging import RichHandler
 
-# Configure basic logging
+# Configure basic logging with RichHandler
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(rich_tracebacks=True, markup=True, show_path=False)],
 )
 
 # Load environment variables
