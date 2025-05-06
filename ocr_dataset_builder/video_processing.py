@@ -1,7 +1,6 @@
 import logging
 import math
 import random
-import time
 from pathlib import Path
 
 import cv2
@@ -21,24 +20,56 @@ def extract_frames(
     max_dimension: int | None = 1024,
     max_frames_per_video: int | None = None,
 ) -> list[str]:
-    """
-    Extracts frames from a video, potentially samples them, and saves.
+    """📸 Extracts, processes, and saves frames from a video file.
 
-    1. Extracts frames at target_fps.
-    2. Optionally resizes frames to max_dimension.
-    3. Optionally samples max_frames_per_video from the extracted frames.
-    4. Saves the final selected frames.
+    This function performs a multi-step process:
+    1.  **Initial Extraction**: Reads the video and extracts frames based on
+        the `target_fps`. If `target_fps` is 1 (default), it aims to get
+        one frame per second of video.
+    2.  **Resizing (Optional)**: If `max_dimension` is specified, each
+        extracted frame is resized so that its largest dimension (width or
+        height) does not exceed `max_dimension`, maintaining aspect ratio.
+    3.  **Sampling (Optional)**: If `max_frames_per_video` is specified and
+        the number of extracted (and resized) frames exceeds this value,
+        a random subset of `max_frames_per_video` frames is selected.
+    4.  **Saving**: The selected frames are saved as JPEG images
+        (`frame_XXXXXX.jpg`, where XXXXXX is the second mark of the frame
+        in the video) in the specified `output_dir`.
+
+    The function includes progress bars for frame extraction and saving,
+    and logs its operations for monitoring.
 
     Args:
-        video_path: Path to the input video file.
-        output_dir: Directory to save the extracted frames.
-        target_fps: Target FPS for initial extraction (default: 1).
-        max_dimension: Maximum width or height for optional resizing.
-        max_frames_per_video: Max number of frames to randomly sample and save.
-                              If None, all extracted frames are saved. Defaults to None.
+        video_path (str): The absolute or relative path to the input video
+                          file.
+        output_dir (str): The directory where extracted frames will be saved.
+                          It will be created if it doesn't exist.
+        target_fps (int, optional): The desired frames per second to extract.
+                                    Defaults to 1. If set to 0 or a
+                                    negative value, it defaults to extracting
+                                    every frame.
+        max_dimension (int | None, optional): The maximum size (in pixels)
+                                              for the largest dimension of
+                                              the extracted frames. If None,
+                                              no resizing is performed.
+                                              Defaults to 1024.
+        max_frames_per_video (int | None, optional): The maximum number of
+                                                     frames to randomly
+                                                     sample and save from the
+                                                     video. If None, all
+                                                     frames meeting the FPS and
+                                                     resizing criteria are
+                                                     saved. Defaults to None.
 
     Returns:
-        List of paths to the finally saved frames, or empty list on error.
+        list[str]: A list of strings, where each string is the absolute path
+                   to a saved frame. Returns an empty list if the video
+                   cannot be opened or no frames are saved.
+
+    Raises:
+        Logs errors for issues like file not found, inability to open video,
+        or frame writing failures, but aims to not hard crash, returning an
+        empty list instead.
     """
     video_path_obj = Path(video_path)
     output_dir_obj = Path(output_dir)
@@ -207,9 +238,19 @@ def extract_frames(
 
 
 def get_human_readable_size(size_bytes: int) -> str:
-    """Converts bytes to a human-readable string (KB, MB, GB)."""
-    if size_bytes == 0:
-        return "0B"
+    """💾 Converts a size in bytes to a human-readable string format.
+
+    Supports B, KB, MB, GB, TB.
+
+    Args:
+        size_bytes (int): The size in bytes.
+
+    Returns:
+        str: A string representing the size in a human-readable unit
+             (e.g., "1.23 MB"). Returns "0 B" if input is non-positive.
+    """
+    if size_bytes <= 0:
+        return "0 B"
     size_name = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
     i = int(math.floor(math.log(size_bytes, 1024)))
     p = math.pow(1024, i)

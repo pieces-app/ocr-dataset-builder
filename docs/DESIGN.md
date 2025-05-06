@@ -1,72 +1,113 @@
-# OCR Dataset Builder - Design Document
+# Design Document: OCR Training Dataset Builder
 
-## 1. Goal
+## 1. Introduction
 
-To create a dataset for training multimodal OCR and context understanding models by processing frames from YouTube videos using a Gemini large language model.
+This document outlines the design and architecture of the OCR Training Dataset Builder. The primary goal is to process YouTube video content (frames and metadata) to generate a high-quality dataset for training multi-modal OCR and visual understanding models, leveraging a sophisticated LLM prompt for analysis.
 
-## 2. Data Source
+## 2. High-Level Architecture
 
-- **Location:** `/mnt/nvme-fast0/datasets/pieces/pieces-ocr-v-0-1-0/`
-- **Structure:** Contains subdirectories, each corresponding to a YouTube video.
-- **Contents (per video):**
-    - `*.info.json`: Metadata file (title, description, ID, duration, tags, categories, etc.).
-    - `*.en.vtt` / `*.en-orig.vtt`: Subtitle files.
-    - Associated video file (location assumed accessible, potentially referenced in `.info.json`).
+The system is envisioned to operate in several key stages:
 
-## 3. Processing Pipeline (Per Video)
+1.  **Dataset Ingestion**: The system takes a path to a dataset typically containing subdirectories for each video. Each subdirectory is expected to hold video files and metadata (e.g., `.info.json`, `.vtt` subtitles).
+2.  **Frame Extraction & Processing**: Videos are processed to extract relevant frames. This stage involves:
+    *   Identifying video files.
+    *   Extracting frames at a specified rate (e.g., 1 FPS).
+    *   Optionally resizing frames to a maximum dimension.
+    *   Optionally sampling a maximum number of frames per video.
+    *   Saving processed frames to a structured output directory, mirroring the input structure.
+    *   Copying associated metadata files to the output directory.
+3.  **LLM-based Analysis (Future Milestone)**:
+    *   Sequences of extracted frames will be sent to a multi-modal LLM (e.g., Gemini via Vertex AI).
+    *   The LLM will use the `ocr_dataset_builder/prompts/ocr_image_multi_task_prompt.md` to perform detailed analysis on each frame and summarize the sequence.
+4.  **Output Generation**: The structured output from the LLM will be saved, likely in a JSON Lines format, associating the analysis with the source frames and video.
 
-1.  **Frame Extraction:**
-    - Extract frames from the video file at a rate of 1 frame per second.
-    - Store extracted frames temporarily or with persistent, structured naming (e.g., `/path/to/frames/{video_id}/frame_{second}.jpg`).
+## 3. Core Modules and Components
 
-2.  **Batching:**
-    - Group extracted frames into batches of 60 consecutive frames (representing 1 minute of video content).
+### 3.1. Frame Extraction (`ocr_dataset_builder/video_processing.py`)
 
-3.  **LLM Processing (Per Batch of 60 Frames):**
-    - **Model:** Gemini 2.5 Pro (via Vertex AI).
-    - **Input:**
-        - 60 image frames.
-        - An adapted version of the prompt defined in `ocr_dataset_builder/prompts/ocr_image_multi_task_prompt.md`.
-    - **Prompt Adaptation:**
-        - **Overall:** The prompt needs modification to accept a *batch* of 60 frames as input instead of a single desktop image.
-        - **Task 1 (Raw OCR):** Run per frame. Extract all visible text from the frame.
-        - **Task 2 (Augmented OCR):** Run per frame. Introduce realistic imperfections to the Task 1 output for that frame.
-        - **Task 3 (Cleaned OCR):** Run per frame. Clean the Task 2 output for that frame.
-        - **Task 4 (Structured Markdown):** Run per frame. **Adaptation Required:** Since the input is a raw video frame, not a desktop screenshot, redefine "Application". Instead, focus on identifying key content zones or elements *within the frame*.
-            - Example Structure per Frame:
-                ```markdown
-                ### Frame Content Analysis: [Timestamp or Frame Index]
-                #### Primary Subject: (e.g., Code Editor View, Presentation Slide, Talking Head, Gameplay Scene)
-                #### Key Text Elements: (List significant text blocks identified)
-                #### Visible UI Elements: (e.g., Buttons, Menus shown in a tutorial)
-                #### Inferred Action/Topic: (Brief description of what's happening in this specific frame)
-                ```
-        - **Task 5 (Narrative Summary):** Run *once per batch*. Synthesize the information from the 60 processed frames (Tasks 1-4 outputs) and the frame sequence to generate a 1-3 paragraph narrative describing the overall activity or topic covered during that 1-minute segment.
-    - **API Call:** Structure the Vertex AI API call to handle multimodal input (60 images + adapted text prompt).
+*   **Purpose**: To efficiently extract and prepare frames from individual video files.
+*   **Key Function**: `extract_frames()`
+    *   **Input**: Video file path, output directory, target FPS, max dimension for resizing, max frames to sample.
+    *   **Process**:
+        1.  Opens video using OpenCV (`cv2.VideoCapture`).
+        2.  Calculates frame interval based on native FPS and target FPS.
+        3.  Iterates through video, extracting frames at the calculated interval.
+        4.  If `max_dimension` is set, resizes frames maintaining aspect ratio.
+        5.  Collects all candidate frames (path and image data).
+        6.  If `max_frames_per_video` is set and candidate count exceeds it, performs random sampling.
+        7.  Saves selected frames to the output directory with names like `frame_XXXXXX.jpg` (XXXXXX = second mark).
+    *   **Output**: List of paths to saved frames.
+    *   **Error Handling**: Logs errors and aims to be robust (e.g., skips problematic frames/videos).
+*   **Utilities**: `get_human_readable_size()` for logging.
 
-4.  **Output Generation (Per Batch):**
-    - Create a JSON object or similar data record containing:
-        - `image_paths`: (list[str]) Paths to the 60 frame image files in the batch.
-        - `task_1_outputs`: (list[str]) List of 60 raw OCR strings.
-        - `task_2_outputs`: (list[str]) List of 60 augmented OCR strings.
-        - `task_3_outputs`: (list[str]) List of 60 cleaned OCR strings.
-        - `task_4_outputs`: (list[str]) List of 60 structured Markdown analysis strings (using the adapted Task 4 definition).
-        - `task_5_output`: (str) Single narrative summary for the batch.
-        - `youtube_video_id`: (str) From `.info.json`.
-        - `metadata`: (dict) Dictionary containing selected small fields from `.info.json`: `title`, `duration`, `channel_id`, `channel_url`, `view_count`, `age_limit`, `tags`, `categories`, `webpage_url`.
+### 3.2. Pipeline Orchestration (e.g., `run_pipeline.py` - to be developed/reinstated)
 
-5.  **Data Storage:**
-    - Store the generated output records (e.g., as JSON lines in a file, entries in a database).
+*   **Purpose**: To manage the processing of an entire dataset of videos.
+*   **Responsibilities**:
+    *   Traverse the input dataset directory structure.
+    *   For each video subdirectory:
+        *   Locate the video file (handling various extensions).
+        *   Locate the metadata file (e.g., `.info.json`).
+        *   Create a corresponding output subdirectory.
+        *   Copy the metadata file to the output subdirectory.
+        *   Invoke `extract_frames()` from `video_processing.py` for the video.
+    *   **Parallel Processing**: Utilize `concurrent.futures.ProcessPoolExecutor` to process multiple video directories in parallel, improving throughput.
+    *   **Dataset Slicing**: Allow processing of a subset of videos using `start_index` and `end_index` parameters.
+    *   **CLI Interface**: Provide a command-line interface (e.g., using `fire`) for easy execution and parameterization.
+    *   **Progress Reporting**: Outer `tqdm` progress bar for directories, inner for frames (handled by `extract_frames`).
 
-## 4. Implementation Details
+### 3.3. LLM Prompt (`ocr_dataset_builder/prompts/ocr_image_multi_task_prompt.md`)
 
-- **Libraries:** `opencv-python` (frame extraction), `google-genai` / `google-generativeai` (Vertex AI client for Gemini), `yt-dlp` (video info/download), `fire` (CLI), `rich` (console output), `python-dotenv`.
-- **Workflow Orchestration:** A Python script, potentially using `fire` for the CLI, to iterate through video directories, manage extraction, batching, LLM calls, and output saving.
-- **Error Handling:** Implement retries for LLM calls, handle missing video files or corrupted data gracefully.
+*   **Purpose**: To guide the LLM in analyzing frame sequences and producing structured data.
+*   **Design for Frame Sequences**:
+    *   **Input**: A sequence of N frames from a single video, presented sequentially.
+    *   **Task Adaptation**:
+        *   Tasks 1-4 (Raw OCR, Augmented OCR, Cleaned OCR, Structured Markdown) are applied **Per Frame**.
+        *   Task 5 (Narrative Summary) is applied **Per Sequence**, summarizing the activity across all N frames.
+    *   **Speaker Attribution**: Retains detailed rules for speaker identification and dialogue attribution, to be applied based on content visible within frames.
+    *   **Output Structure**: Defined with clear delimiters (`-- Frame X --`) for per-frame outputs, followed by a single block for the per-sequence summary. This facilitates parsing.
+    *   **Few-Shot Examples**: Adapted to reflect the per-frame/per-sequence output format, using conceptual translations of desktop screenshots to video frame content.
 
-## 5. Future Considerations
+### 3.4. LLM Interaction Module (e.g., `llm_processing.py` - Future Milestone)
 
-- Explore different frame selection strategies (e.g., keyframes, subtitle timing).
-- Experiment with different batch sizes.
-- Refine Task 4 structure based on initial results.
-- Add speaker diarization using subtitle timing if needed for Task 4 adaptation. 
+*   **Purpose**: To handle communication with the LLM API (e.g., Google Vertex AI for Gemini).
+*   **Responsibilities**:
+    *   Take a sequence of frame image data (and potentially paths or other metadata).
+    *   Load and format the multi-task prompt.
+    *   Construct the API request with the prompt and image data.
+    *   Handle API calls, including authentication (e.g., using `GOOGLE_API_KEY` from `.env`).
+    *   Manage API responses, including retries or error handling.
+    *   Parse the LLM's structured text output into a machine-readable format (e.g., Python dictionaries).
+
+## 4. Data Flow
+
+1.  User specifies `dataset_path`, `output_path`, and other processing parameters (FPS, workers, etc.) to the pipeline script.
+2.  The pipeline script scans `dataset_path` for video subdirectories.
+3.  For each video directory processed (in parallel):
+    a.  Video file and `.info.json` are identified.
+    b.  An output subdirectory is created under `output_path`.
+    c.  `.info.json` is copied to the output subdirectory.
+    d.  `extract_frames()` is called with the video path and its corresponding output subdirectory.
+    e.  `extract_frames()` reads the video, extracts, resizes, samples, and saves frames as `frame_XXXXXX.jpg` in the designated output folder.
+4.  (Future) The LLM processing module will:
+    a.  Read sequences of frames from the `output_path`.
+    b.  Send frame data and the prompt to the LLM.
+    c.  Receive structured text output.
+    d.  Parse and save this output, linking it back to the source video/frames.
+
+## 5. Key Design Decisions & Considerations
+
+*   **Modularity**: Separating frame extraction, pipeline orchestration, and LLM interaction into distinct modules enhances maintainability and testability.
+*   **Parallelism**: Processing videos in parallel is crucial for handling large datasets efficiently.
+*   **Configuration**: Using command-line arguments for key parameters allows flexibility.
+*   **Robustness**: Logging and error handling at various stages help in diagnosing issues without catastrophic failure.
+*   **Mirrored Output Structure**: Replicating the input dataset structure in the output directory for frames and metadata simplifies data management and association.
+*   **Prompt Adaptability**: The core LLM prompt, originally for desktop screenshots, was carefully adapted to handle sequences of video frames, maintaining its analytical depth while accommodating the new input modality.
+*   **Environment Management**: Using Conda and Poetry (`pyproject.toml`, `install-conda-env.sh`) ensures a reproducible and isolated environment.
+
+## 6. Future Enhancements
+
+*   Integration of subtitle data (`.vtt` files) as additional context for the LLM.
+*   More sophisticated frame selection logic (e.g., scene change detection, content-based filtering) beyond simple FPS and random sampling.
+*   Support for various output formats for the LLM data.
+*   Containerization with Docker for easier deployment. 
