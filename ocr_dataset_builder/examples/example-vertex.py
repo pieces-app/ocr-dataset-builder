@@ -1,4 +1,5 @@
 import os
+
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -53,7 +54,7 @@ def generate():
             include_thoughts=True,
         ),
     )
-
+    output_text = ""
     for chunk in client.models.generate_content_stream(
         model=model,
         contents=contents,
@@ -61,6 +62,25 @@ def generate():
     ):
         if chunk.text:
             print(chunk.text, end="")
+            output_text += chunk.text
+
+    num_tokens = client.models.compute_tokens(
+        model=model,
+        contents=contents,
+    )
+    print(f"Number of compute tokens: {num_tokens}")
+
+    num_count_tokens = client.models.count_tokens(
+        model=model,
+        contents=contents,
+    )
+    print(f"Number of count input tokens: {num_count_tokens}")
+
+    num_output_tokens = client.models.count_tokens(
+        model=model,
+        contents=output_text,
+    )
+    print(f"Number of count output tokens: {num_output_tokens}")
 
 
 generate()

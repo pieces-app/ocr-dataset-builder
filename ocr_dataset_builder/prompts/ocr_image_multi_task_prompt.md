@@ -11,10 +11,30 @@ This process generates training data for the Pieces LTM-2 AI Context Management 
 
 🗣️ Speaker Attribution Rule (Apply across Tasks 1-4):
 When processing dialogues or text attributed to individuals visible within a frame (e.g., on-screen text, simulated chat, code comments):
-a) Use clearly visible speaker names if present next to the text.
-b) If a name is absent but a distinct profile image/photo is associated with the text, use a descriptive placeholder like "Speaker1 (Image: [brief description])", "Speaker2 (Image: [brief description])", etc. Maintain consistency for the same image across the sequence analysis.
-c) If neither name nor a distinct image allows identification, use generic placeholders like "Speaker1", "Speaker2", etc., maintaining consistency.
-d) For general on-screen text not attributable to a specific person (e.g., code, UI text, presentation slides), label it "On-Screen Text".
+a) If a name is clearly visible next to the text, **prefix** the text with `Speaker: [Name] `. Example: `Speaker: Antreas Can everyone confirm...`
+b) If a name is absent but a distinct profile image/photo is associated with the text, **prefix** the text with `SpeakerX (Image: [brief description]): `. Maintain consistency for the same image across the sequence analysis. Example: `Speaker1 (Image: male, glasses): I'll check those...`
+c) If neither name nor a distinct image allows identification, **prefix** the text with `SpeakerX: `. Maintain consistency. Example: `Speaker1: Has anyone reviewed...`
+d) For general on-screen text **not attributable** to a specific person (e.g., code, UI text, presentation slides, window titles), output the text **directly without any prefix**. Example: `Microsoft Teams – Meeting: Pieces AI OCR Sync`
+
+🆕 Redundancy & Appending Rules (Apply **Individually** to Tasks 1-4):
+- For **each** task (1, 2, 3, and 4) and for **each** frame (from Frame 1 to N-1):
+- Let `Content(i)` be the generated content for the current frame (`Frame i`) for the current task.
+- Let `Content(i-1)` be the generated content for the previous frame (`Frame i-1`) for the current task.
+
+- **Priority 1: Exact Match:** If `Content(i)` is **exactly identical** to `Content(i-1)`, output **only** the placeholder string `<<< SAME_AS_PREVIOUS >>>` for `Frame i`.
+
+- **Priority 2: Appended Content:** If `Content(i)` is **not** identical to `Content(i-1)`, check if `Content(i)` **starts with** `Content(i-1)` followed by a newline character (`\n`) and then has additional, non-empty content (`NewContent`).
+    - Formally: Check if `Content(i) == Content(i-1) + "\n" + NewContent`, where `NewContent` is not empty.
+    - If this condition is met, output **only** the placeholder `<<< PREVIOUS_PLUS >>>` followed by a newline, followed by **only** the `NewContent` for `Frame i`. Example:
+      ```
+      <<< PREVIOUS_PLUS >>>
+      [Only the newly appended content goes here]
+      ```
+
+- **Priority 3: Full Content:** If neither of the above conditions is met (i.e., the content is different but not just appended), output the **full** `Content(i)` for `Frame i`.
+
+- These rules apply independently to each task (Task 1 can use `<<< SAME_AS_PREVIOUS >>>` while Task 4 uses `<<< PREVIOUS_PLUS >>>`, etc.).
+- Frame 0 for any task can NEVER use these placeholders.
 
 Sequential Tasks to Perform on the Input IMAGE Sequence:
 
@@ -24,42 +44,46 @@ For EACH frame in the input sequence (Frame 0 to N-1):
 - Extract ALL visible textual content exactly as it appears in that frame.
 - Preserve original layout, fragmentation, and OCR inaccuracies. Do not clean up.
 - Include text from code, UI elements, slides, etc. visible *in that specific frame*.
-- Apply the Speaker Attribution Rule tentatively.
+- Apply the Speaker Attribution Rule (prefix attributable text, output non-attributable text directly).
+- Apply the Redundancy & Appending Rules based on comparison with the previous frame's raw OCR output.
 - Output the results as a list of N strings, one for each frame.
 
 TASK 2: Augmented OCR Imperfections (Per Frame)
 
 For EACH of the N raw text strings from Task 1 (one per frame):
-- Introduce realistic OCR imperfections: Randomly duplicate 1-3 lines/fragments and omit 1-3 different lines/fragments *within that frame's text*.
-- Preserve speaker attributions, adjusting if necessary.
+- Generate the augmented text for the current frame (`Frame i`). Note: If Task 1 for `Frame i` used a placeholder, base the augmentation on the *reconstructed* content of Task 1 for `Frame i`.
+- Preserve speaker attributions/prefixes as applied in Task 1, adjusting if necessary due to augmentation.
+- Apply the Redundancy & Appending Rules by comparing the *result* of this frame's augmentation (`AugmentedContent(i)`) with the previous frame's final Task 2 output (`AugmentedContent(i-1)`).
 - Output the results as a list of N strings, one for each frame.
 
 TASK 3: Cleaned OCR Text (Per Frame)
 
 For EACH of the N augmented text strings from Task 2 (one per frame):
-- Perform minimal cleanup: Correct unambiguous OCR typos, remove exact duplicates introduced in Task 2 augmentation *within that frame's text*.
-- Do not rephrase or restructure. Refine speaker attribution if cleanup provides clarity.
+- Generate the cleaned text for the current frame (`Frame i`). Note: If Task 2 for `Frame i` used a placeholder, base the cleaning on the *reconstructed* content of Task 2 for `Frame i`.
+- Do not rephrase or restructure. Refine speaker attribution/prefixes if cleanup provides clarity.
+- Apply the Redundancy & Appending Rules by comparing the *result* of this frame's cleaning (`CleanedContent(i)`) with the previous frame's final Task 3 output (`CleanedContent(i-1)`).
 - Output the results as a list of N strings, one for each frame.
 
 TASK 4: Structured Markdown Output (Per Frame)
 
 For EACH frame in the input sequence (Frame 0 to N-1):
-- Analyze the cleaned text from Task 3 (for that specific frame) in conjunction with the visual context present in that original input IMAGE frame.
-- Generate a separate Markdown block for the primary application or content type visible *in that frame*. (e.g., Code Editor, Browser, Terminal, Presentation Slide, File Explorer).
+- Analyze the cleaned text from Task 3 (for that specific frame, *reconstructing* if necessary) in conjunction with the visual context present in that original input IMAGE frame.
+- Generate the structured Markdown block for the current frame (`Frame i`).
 - The Markdown block for the frame should contain:
 ```markdown
 ### Frame Content Analysis: [Frame Index (0 to N-1)]
 #### Primary Subject: (Brief label, e.g., Code Editor View, Presentation Slide, Talking Head, UI Demo, Terminal Output, Diagram, Browser - Webpage Title)
-#### Key Text Elements: (Bulleted list of significant text blocks from cleaned OCR for this frame, with speaker attribution)
+#### Key Text Elements: (Bulleted list. Prefix attributable text with `Speaker: [Name]` etc., list non-attributable text directly.)
 #### Visible UI Elements: (Bulleted list, e.g., Buttons, Menus, Scrollbars visible in this frame, if applicable)
 #### Inferred Action/Topic: (1-2 sentences describing what is being shown or done in this specific frame, based on its visuals and text)
 ```
 - Ensure the markdown provides a detailed breakdown of the content visible *within that single frame*.
+- Apply the Redundancy & Appending Rules by comparing the *generated Markdown block* for this frame (`Markdown(i)`) with the previous frame's final Task 4 output (`Markdown(i-1)`).
 - Output the results as a list of N Markdown strings, one for each frame.
 
 TASK 5: Narrative Summary of Sequence (Per Sequence)
 
-Synthesize the information gathered from the previous tasks across ALL N frames (especially the structured breakdowns in Task 4) and the overall visual flow of the sequence.
+Synthesize the information gathered from the previous tasks across ALL N frames (using the *reconstructed* content from Tasks 1-4 where placeholders were used) and the overall visual flow of the sequence.
 Generate ONE concise, human-readable narrative (1-3 paragraphs) describing the activity depicted across the entire N-frame sequence:
 - The likely overall topic or main activity occurring during the sequence.
 - Key transitions or events observed across frames (e.g., switching views, typing code, showing results, user interactions).
@@ -70,175 +94,186 @@ Generate ONE concise, human-readable narrative (1-3 paragraphs) describing the a
 
 Provide the output for the given input IMAGE sequence strictly adhering to this structure (assuming N frames).
 **Crucially, ensure the header lines (`==== TASK ... ====` and `-- Frame ... --`) exactly match these specifications for reliable parsing.**
+The placeholders `<<< SAME_AS_PREVIOUS >>>` or `<<< PREVIOUS_PLUS >>>\n[NewContent]` should be the only content for a given frame within a task when used.
 
 ==== TASK 1: Raw OCR Output (List of N strings) ====
 -- Frame 0 --
-[Raw OCR text for frame 0]
+[Raw OCR text for frame 0, with speaker prefixes where applicable]
 -- Frame 1 --
-[Raw OCR text for frame 1]
+[Raw OCR text for frame 1 OR <<< SAME_AS_PREVIOUS >>> OR <<< PREVIOUS_PLUS >>>\nNewContent1]
 ...
 -- Frame N-1 --
-[Raw OCR text for frame N-1]
+[Raw OCR text for frame N-1 OR <<< SAME_AS_PREVIOUS >>> OR <<< PREVIOUS_PLUS >>>\nNewContentN-1]
 
 ==== TASK 2: Augmented Imperfections (List of N strings) ====
 -- Frame 0 --
-[Augmented OCR text for frame 0]
+[Augmented OCR text for frame 0, preserving speaker prefixes]
 -- Frame 1 --
-[Augmented OCR text for frame 1]
+[Augmented OCR text for frame 1 OR <<< SAME_AS_PREVIOUS >>> OR <<< PREVIOUS_PLUS >>>\nNewAugContent1]
 ...
 -- Frame N-1 --
-[Augmented OCR text for frame N-1]
+[Augmented OCR text for frame N-1 OR <<< SAME_AS_PREVIOUS >>> OR <<< PREVIOUS_PLUS >>>\nNewAugContentN-1]
 
 ==== TASK 3: Cleaned OCR Text (List of N strings) ====
 -- Frame 0 --
-[Cleaned OCR text for frame 0]
+[Cleaned OCR text for frame 0, preserving/refining speaker prefixes]
 -- Frame 1 --
-[Cleaned OCR text for frame 1]
+[Cleaned OCR text for frame 1 OR <<< SAME_AS_PREVIOUS >>> OR <<< PREVIOUS_PLUS >>>\nNewCleanedContent1]
 ...
 -- Frame N-1 --
-[Cleaned OCR text for frame N-1]
+[Cleaned OCR text for frame N-1 OR <<< SAME_AS_PREVIOUS >>> OR <<< PREVIOUS_PLUS >>>\nNewCleanedContentN-1]
 
 ==== TASK 4: Structured Markdown Output (List of N Markdown blocks) ====
 -- Frame 0 --
-[Markdown analysis block for frame 0]
+[Markdown analysis block for frame 0, using prefixes only for attributable text in Key Text Elements]
 -- Frame 1 --
-[Markdown analysis block for frame 1]
+[Markdown analysis block for frame 1 OR <<< SAME_AS_PREVIOUS >>> OR <<< PREVIOUS_PLUS >>>\nNewMarkdownContent1]
 ...
 -- Frame N-1 --
-[Markdown analysis block for frame N-1]
+[Markdown analysis block for frame N-1 OR <<< SAME_AS_PREVIOUS >>> OR <<< PREVIOUS_PLUS >>>\nNewMarkdownContentN-1]
 
 ==== TASK 5: Narrative Summary (Single Block for the Sequence) ====
 [Narrative summary covering the N-frame sequence]
 
 
---- Reference Few-Shot Examples (Illustrating Task Detail and Format) ---
+--- Reference Few-Shot Examples (Illustrating Task Detail, Format, Redundancy, and Appending) ---
 
-**IMPORTANT NOTE:** The following few-shot examples demonstrate the desired LEVEL OF DETAIL and FORMATTING for each task. However, they were originally created based on analyzing **single, complex desktop screenshots**. They have been **restructured below** to *illustrate* how the output should look for a **sequence of frames** depicting more **gradual changes**, as one might see in a screen recording.
+**IMPORTANT NOTE:** The following few-shot examples demonstrate the desired LEVEL OF DETAIL and FORMATTING, **including the new placeholders and updated speaker attribution**. They are illustrative and based on simulating gradual changes over sequences.
 
 When applying this prompt to a **real sequence of video frames**:
-- **Tasks 1-4** should be generated *for each individual frame* in the sequence, analyzing only the content visible within that frame. The Task 4 breakdown will describe the primary content/application visible in that single frame.
+- **Tasks 1-4** should be generated *for each individual frame*, using the placeholders and specified speaker attribution where applicable.
 - **Task 5** should be generated *once* for the entire sequence, summarizing the activity observed across all frames.
 
-Use these examples as a guide for the *quality and structure* of the output for each task, adapting the specific content to the actual frame sequence being processed.
+Use these examples as a guide for the *quality and structure* of the output, adapting the specific content to the actual frame sequence being processed.
 
-🖥️ Few-Shot Example (1) - Hypothetical Input: Windows Desktop Showing Teams Conversation (Simulated 3-Frame Sequence)
+🖥️ Few-Shot Example (1) - Hypothetical Input: Windows Desktop Showing Teams Conversation (Simulated 5-Frame Sequence with Redundancy & Appending)
 
-**(Note: This example simulates 3 frames focusing on a Teams chat, showing gradual message additions.)**
+**(Note: This example simulates 5 frames. Frame 2 appends content to Frame 1. Frame 3 is identical to Frame 2.)**
 
-<details><summary>View Example 1 Process (Illustrative Gradual Sequence)</summary>
-==== TASK 1: Raw OCR Output (List of 3 strings) ====
+<details><summary>View Example 1 Process (Illustrative Sequence with Redundancy & Appending)</summary>
+==== TASK 1: Raw OCR Output (List of 5 strings) ====
 -- Frame 0 --
 Microsoft Teams – Meeting: Pieces AI OCR Sync (Active Chat Area)
-Antreas 10:06AM: "Can everyone confirm the progress on today's OCR tests?"
-Nina 10:07AM: "Tests mostly passed, minor augmentation discrepancies noted again."
+Speaker: Antreas 10:06AM: "Can everyone confirm the progress on today's OCR tests?"
 Windows 11 Taskbar: Teams (active) | Outlook | VSCode | Chrome | 10:16 AM
 -- Frame 1 --
-Microsoft Teams – Meeting: Pieces AI OCR Sync (Active Chat Area)
-Antreas 10:06AM: "Can everyone confirm the progress on today's OCR tests?"
-Nina 10:07AM: "Tests mostly passed, minor augmentation discrepancies noted again."
-Speaker1 (Image: male, glasses, dark hair) 10:08AM: "I'll check those augmentations later today. Ryan is double-checking too."
-Windows 11 Taskbar: Teams (active) | Outlook | VSCode | Chrome | 10:17 AM
+<<< PREVIOUS_PLUS >>>
+Speaker: Nina 10:07AM: "Tests mostly passed, minor augmentation discrepancies noted again."
 -- Frame 2 --
-Microsoft Teams – Meeting: Pieces AI OCR Sync (Active Chat Area)
-Antreas 10:06AM: "Can everyone confirm the progress on today's OCR tests?"
-Nina 10:07AM: "Tests mostly passed, minor augmentation discrepancies noted again."
-Speaker1 (Image: male, glasses, dark hair) 10:08AM: "I'll check those augmentations later today. Ryan is double-checking too."
-Ryan 10:09AM: "Yes, Speaker1 and I will sync offline."
+<<< PREVIOUS_PLUS >>>
+Speaker1 (Image: male, glasses, dark hair): 10:08AM: "I'll check those augmentations later today. Ryan is double-checking too."
+-- Frame 3 --
+<<< SAME_AS_PREVIOUS >>>
+-- Frame 4 --
+<<< PREVIOUS_PLUS >>>
+Speaker: Ryan 10:09AM: "Yes, Speaker1 and I will sync offline."
 [Nina is typing...]
-Windows 11 Taskbar: Teams (active) | Outlook | VSCode | Chrome | 10:17 AM
 
-==== TASK 2: Augmented Imperfections (List of 3 strings) ====
+==== TASK 2: Augmented Imperfections (List of 5 strings) ====
 -- Frame 0 --
 Microsoft Teams – Meeting: Pieces AI OCR Sync (Active Chat Area)
-Antreas 10:06AM: "Can everyone confirm the progress on today's OCR tests?"
-Nina 10:07AM: "Tests mostly passed, minor augmentation discrepancies noted again."
-Nina 10:07AM: "Tests mostly passed, minor augmentation discrepancies noted again." <-- Duplicated
-Windows 11 Taskbar: Teams (active) | Outlook | VSCode | Chrome | 10:16 AM
-// Omitted: Antreas 10:06AM: ...
+Speaker: Antreas 10:06AM: "Can everyone confirm the progress on today's OCR tests?"
+// Omitted: Windows 11 Taskbar...
+Windows 11 Taskbar: Teams (active) | Outlook | VSCode | Chrome | 10:16 AM <-- Duplicated
 -- Frame 1 --
 Microsoft Teams – Meeting: Pieces AI OCR Sync (Active Chat Area)
-Antreas 10:06AM: "Can everyone confirm the progress on today's OCR tests?"
-// Omitted: Nina 10:07AM: ...
-Speaker1 (Image: male, glasses, dark hair) 10:08AM: "I'll check those augmentations later today. Ryan is double-checking too."
-Speaker1 (Image: male, glasses, dark hair) 10:08AM: "I'll check those augmentations later today. Ryan is double-checking too." <-- Duplicated
-Windows 11 Taskbar: Teams (active) | Outlook | VSCode | Chrome | 10:17 AM
+Speaker: Antreas 10:06AM: "Can everyone confirm the progress on today's OCR tests?"
+// Omitted: Speaker: Nina 10:07AM: "Tests mostly passed, minor augmentation discrepancies noted again."
+Windows 11 Taskbar: Teams (active) | Outlook | VSCode | Chrome | 10:16 AM
 -- Frame 2 --
 Microsoft Teams – Meeting: Pieces AI OCR Sync (Active Chat Area)
-Antreas 10:06AM: "Can everyone confirm the progress on today's OCR tests?"
-Nina 10:07AM: "Tests mostly passed, minor augmentation discrepancies noted again."
-Speaker1 (Image: male, glasses, dark hair) 10:08AM: "I'll check those augmentations later today. Ryan is double-checking too."
-Ryan 10:09AM: "Yes, Speaker1 and I will sync offline."
+Speaker: Antreas 10:06AM: "Can everyone confirm the progress on today's OCR tests?"
+Speaker: Nina 10:07AM: "Tests mostly passed, minor augmentation discrepancies noted again."
+Speaker1 (Image: male, glasses, dark hair): 10:08AM: "I'll check those augmentations later today. Ryan is double-checking too." <-- Duplicated
+Windows 11 Taskbar: Teams (active) | Outlook | VSCode | Chrome | 10:16 AM
+// Omitted: Speaker: Nina 10:07AM...
+-- Frame 3 --
+<<< SAME_AS_PREVIOUS >>>
+-- Frame 4 --
+Microsoft Teams – Meeting: Pieces AI OCR Sync (Active Chat Area)
+Speaker: Antreas 10:06AM: "Can everyone confirm the progress on today's OCR tests?"
+Speaker: Nina 10:07AM: "Tests mostly passed, minor augmentation discrepancies noted again."
+Speaker1 (Image: male, glasses, dark hair): 10:08AM: "I'll check those augmentations later today. Ryan is double-checking too."
+Speaker: Ryan 10:09AM: "Yes, Speaker1 and I will sync offline."
 // Omitted: [Nina is typing...]
-Windows 11 Taskbar: Teams (active) | Outlook | VSCode | Chrome | 10:17 AM
+[Nina is typing...] <-- Duplicated
+Windows 11 Taskbar: Teams (active) | Outlook | VSCode | Chrome | 10:16 AM
 
-==== TASK 3: Cleaned OCR Text (List of 3 strings) ====
+==== TASK 3: Cleaned OCR Text (List of 5 strings) ====
 -- Frame 0 --
 Microsoft Teams – Meeting: Pieces AI OCR Sync (Active Chat Area)
-Antreas 10:06AM: "Can everyone confirm the progress on today's OCR tests?"
-Nina 10:07AM: "Tests mostly passed, minor augmentation discrepancies noted again."
+Speaker: Antreas 10:06AM: "Can everyone confirm the progress on today's OCR tests?"
 Windows 11 Taskbar: Teams (active) | Outlook | VSCode | Chrome | 10:16 AM
 -- Frame 1 --
-Microsoft Teams – Meeting: Pieces AI OCR Sync (Active Chat Area)
-Antreas 10:06AM: "Can everyone confirm the progress on today's OCR tests?"
-Speaker1 (Image: male, glasses, dark hair) 10:08AM: "I'll check those augmentations later today. Ryan is double-checking too."
-Windows 11 Taskbar: Teams (active) | Outlook | VSCode | Chrome | 10:17 AM
+<<< PREVIOUS_PLUS >>>
+Speaker: Nina 10:07AM: "Tests mostly passed, minor augmentation discrepancies noted again."
 -- Frame 2 --
-Microsoft Teams – Meeting: Pieces AI OCR Sync (Active Chat Area)
-Antreas 10:06AM: "Can everyone confirm the progress on today's OCR tests?"
-Nina 10:07AM: "Tests mostly passed, minor augmentation discrepancies noted again."
-Speaker1 (Image: male, glasses, dark hair) 10:08AM: "I'll check those augmentations later today. Ryan is double-checking too."
-Ryan 10:09AM: "Yes, Speaker1 and I will sync offline."
+<<< PREVIOUS_PLUS >>>
+Speaker1 (Image: male, glasses, dark hair): 10:08AM: "I'll check those augmentations later today. Ryan is double-checking too."
+-- Frame 3 --
+<<< SAME_AS_PREVIOUS >>>
+-- Frame 4 --
+<<< PREVIOUS_PLUS >>>
+Speaker: Ryan 10:09AM: "Yes, Speaker1 and I will sync offline."
 [Nina is typing...]
-Windows 11 Taskbar: Teams (active) | Outlook | VSCode | Chrome | 10:17 AM
 
-==== TASK 4: Structured Markdown Output (List of 3 Markdown blocks) ====
+==== TASK 4: Structured Markdown Output (List of 5 Markdown blocks) ====
 -- Frame 0 --
 ```markdown
 ### Frame Content Analysis: 0
 #### Primary Subject: Microsoft Teams (Meeting: Pieces AI OCR Sync - Chat)
 #### Key Text Elements:
 - Speaker: Antreas (10:06AM), Text: "Can everyone confirm the progress on today's OCR tests?"
-- Speaker: Nina (10:07AM), Text: "Tests mostly passed, minor augmentation discrepancies noted again."
-- Speaker: On-Screen Text (Taskbar), Text: Teams (active) | Outlook | VSCode | Chrome | 10:16 AM
+- Speaker: Teams (active) | Outlook | VSCode | Chrome | 10:16 AM (Taskbar Text)
 #### Visible UI Elements: Teams chat window (implied), Taskbar
-#### Inferred Action/Topic: Reviewing initial messages in a team meeting chat about OCR test progress.
+#### Inferred Action/Topic: Start of a Teams chat review, initial question posted.
 ```
 -- Frame 1 --
+<<< PREVIOUS_PLUS >>>
 ```markdown
-### Frame Content Analysis: 1
-#### Primary Subject: Microsoft Teams (Meeting: Pieces AI OCR Sync - Chat)
-#### Key Text Elements:
-- Speaker: Antreas (10:06AM), Text: "Can everyone confirm the progress on today's OCR tests?"
-- Speaker: Speaker1 (Image: male, glasses, dark hair, 10:08AM), Text: "I'll check those augmentations later today. Ryan is double-checking too."
-- Speaker: On-Screen Text (Taskbar), Text: Teams (active) | Outlook | VSCode | Chrome | 10:17 AM
-#### Visible UI Elements: Teams chat window (implied), Taskbar
-#### Inferred Action/Topic: Reading a new message from Speaker1 regarding checking OCR augmentations.
-```
--- Frame 2 --
-```markdown
-### Frame Content Analysis: 2
-#### Primary Subject: Microsoft Teams (Meeting: Pieces AI OCR Sync - Chat)
 #### Key Text Elements:
 - Speaker: Antreas (10:06AM), Text: "Can everyone confirm the progress on today's OCR tests?"
 - Speaker: Nina (10:07AM), Text: "Tests mostly passed, minor augmentation discrepancies noted again."
-- Speaker: Speaker1 (Image: male, glasses, dark hair, 10:08AM), Text: "I'll check those augmentations later today. Ryan is double-checking too."
+- Teams (active) | Outlook | VSCode | Chrome | 10:16 AM (Taskbar Text)
+#### Visible UI Elements: Teams chat window (implied), Taskbar
+#### Inferred Action/Topic: Reading Nina's response in the Teams chat about OCR test status.
+```
+-- Frame 2 --
+<<< PREVIOUS_PLUS >>>
+```markdown
+#### Key Text Elements:
+- Speaker: Antreas (10:06AM), Text: "Can everyone confirm the progress on today's OCR tests?"
+- Speaker: Nina (10:07AM), Text: "Tests mostly passed, minor augmentation discrepancies noted again."
+- Speaker1 (Image: male, glasses, dark hair, 10:08AM), Text: "I'll check those augmentations later today. Ryan is double-checking too."
+- Teams (active) | Outlook | VSCode | Chrome | 10:16 AM (Taskbar Text)
+#### Visible UI Elements: Teams chat window (implied), Taskbar
+#### Inferred Action/Topic: Reading Speaker1's response in the Teams chat.
+```
+-- Frame 3 --
+<<< SAME_AS_PREVIOUS >>>
+-- Frame 4 --
+<<< PREVIOUS_PLUS >>>
+```markdown
+#### Key Text Elements:
+- Speaker: Antreas (10:06AM), Text: "Can everyone confirm the progress on today's OCR tests?"
+- Speaker: Nina (10:07AM), Text: "Tests mostly passed, minor augmentation discrepancies noted again."
+- Speaker1 (Image: male, glasses, dark hair, 10:08AM), Text: "I'll check those augmentations later today. Ryan is double-checking too."
 - Speaker: Ryan (10:09AM), Text: "Yes, Speaker1 and I will sync offline."
-- Speaker: On-Screen Text (Typing Indicator), Text: [Nina is typing...]
-- Speaker: On-Screen Text (Taskbar), Text: Teams (active) | Outlook | VSCode | Chrome | 10:17 AM
+- [Nina is typing...] (Typing Indicator Text)
+- Teams (active) | Outlook | VSCode | Chrome | 10:16 AM (Taskbar Text)
 #### Visible UI Elements: Teams chat window (implied), Taskbar, Typing indicator
-#### Inferred Action/Topic: Reading Ryan's confirmation message and noticing Nina is preparing to respond.
+#### Inferred Action/Topic: Reading Ryan's confirmation and seeing Nina typing.
 ```
 
 ==== TASK 5: Narrative Summary (Single Block for the Sequence) ====
-(This summary covers the simulated 3-frame sequence)
-The sequence shows a user monitoring a Microsoft Teams chat for the "Pieces AI OCR Sync" meeting over approximately one minute. Initially, Antreas asks for confirmation on OCR tests, and Nina reports general success with minor issues (Frame 0). Shortly after, Speaker1 responds, stating they will check the specific augmentation discrepancies later with Ryan (Frame 1). Ryan then confirms this plan (Frame 2), and Nina begins typing a response as the sequence ends. The user's focus remains on the Teams application throughout this brief interaction.
+(This summary covers the simulated 5-frame sequence)
+The sequence shows a user monitoring a Microsoft Teams chat. Antreas posts an initial query about OCR tests (Frame 0). Nina adds a response (Frame 1), followed by Speaker1 adding another message (Frame 2). The view remains static momentarily (Frame 3), before Ryan adds a confirmation and Nina begins typing (Frame 4). The focus stays on the Teams application as the conversation progresses.
 
 </details>
 
+
 🖥️ Few-Shot Example (2) - Hypothetical Input: macOS Desktop Showing Safari & Slack (Simulated 3-Frame Sequence)
-
-**(Note: This example simulates 3 frames focusing on Safari browsing project info, with Slack visible.)**
-
+**(Note: This example shows gradual changes and does not use the placeholders. The rules would apply if consecutive frames were identical or only appended content for a given task. It also predates the speaker attribution change - general text like menu/dock items should not have `Speaker: On-Screen Text`.)**
 <details><summary>View Example 2 Process (Illustrative Gradual Sequence)</summary>
 ==== TASK 1: Raw OCR Output (List of 3 strings) ====
 -- Frame 0 --
@@ -373,15 +408,13 @@ The user is actively checking project status and issues related to OCR augmentat
 
 
 🖥️ Few-Shot Example (3) - Hypothetical Input: Slack Call (Structured as 1-Frame Sequence)
-
-**(Note: This example shows a simpler scene, structured as a single-frame sequence (N=1) for format consistency.)**
-
+**(Note: This example shows a single frame (N=1). Placeholders cannot apply to Frame 0. It also predates the speaker attribution change - dock icons text should not have `Speaker: On-Screen Text`.)**
 <details><summary>View Example 3 Process (Illustrative Sequence)</summary>
 ==== TASK 1: Raw OCR Output (List of 1 strings) ====
 -- Frame 0 --
 Slack Call (#general-dev, active call with no names visible):
 ---------------------------------------------------
-[Speaker images visible only]:
+[Speaker images visible only]: 
 Speaker1 (Image: Male, short dark hair, glasses) at 09:33 AM: "Has anyone reviewed the latest augmented OCR data?"
 Speaker2 (Image: Female, curly blonde hair) at 09:34 AM: "Yes, duplicated lines issue still persists."
 Speaker3 (Image: Male, beard, dark skin tone, headphones) at 09:35 AM: "I'll push a fix later today—the augmentation script needs revision."
@@ -392,7 +425,7 @@ Dock icons: Slack | Finder | Chrome | Terminal
 -- Frame 0 --
 slack
 ---------------------------------------------------
-[Speaker images visible only]:
+[Speaker images visible only]: 
 Speaker1 (Image: Male, short dark hair, glasses) at 09:33 AM: "Has anyone reviewed the latest augmented OCR data?"
 Speaker2 (Image: Female, curly blonde hair) at 09:34 AM: "Yes, duplicated lines issue still persists."
 Speaker1 (Image: Male, short dark hair, glasses) at 09:33 AM: "Has anyone reviewed the latest augmented OCR data?" <-- Duplicated Line
@@ -404,7 +437,7 @@ Dock icons: Slack | Finder | Chrome | Terminal
 -- Frame 0 --
 Slack Call (#general-dev, active call with no names visible):
 ---------------------------------------------------
-[Speaker images visible only]:
+[Speaker images visible only]: 
 Speaker1 (Image: Male, short dark hair, glasses) at 09:33 AM: "Has anyone reviewed the latest augmented OCR data?"
 Speaker2 (Image: Female, curly blonde hair) at 09:34 AM: "Yes, duplicated lines issue still persists."
 Speaker3 (Image: Male, beard, dark skin tone, headphones) at 09:35 AM: "I'll push a fix later today—the augmentation script needs revision."
@@ -431,6 +464,7 @@ The user is currently focused on participating in a Slack call within the #gener
 The user's desktop environment appears relatively simple at this moment, with only Slack, Finder, Chrome, and Terminal visible in the dock, suggesting the primary activity is the ongoing call and related development discussion.
 
 </details>
+
 
 --- (End of restructured examples)
 BEGIN PROCESSING INPUT IMAGE SEQUENCE:
