@@ -2,112 +2,109 @@
 
 ## 1. Introduction
 
-This document outlines the design and architecture of the OCR Training Dataset Builder. The primary goal is to process YouTube video content (frames and metadata) to generate a high-quality dataset for training multi-modal OCR and visual understanding models, leveraging a sophisticated LLM prompt for analysis.
+This document outlines the design and architecture of the OCR Training Dataset Builder. The primary goal is to process YouTube video content (frames and metadata) to generate a high-quality dataset for training multi-modal OCR and visual understanding models, leveraging a sophisticated LLM prompt for analysis. The system is architected as a series of interconnected pipelines for frame extraction, optional Tesseract-based OCR, and LLM-based multimodal analysis.
 
 ## 2. High-Level Architecture
 
-The system is envisioned to operate in several key stages:
+The system operates in sequential stages, typically involving these core pipelines:
 
-1.  **Dataset Ingestion**: The system takes a path to a dataset typically containing subdirectories for each video. Each subdirectory is expected to hold video files and metadata (e.g., `.info.json`, `.vtt` subtitles).
-2.  **Frame Extraction & Processing**: Videos are processed to extract relevant frames. This stage involves:
-    *   Identifying video files.
-    *   Extracting frames at a specified rate (e.g., 1 FPS).
-    *   Optionally resizing frames to a maximum dimension.
-    *   Optionally sampling a maximum number of frames per video.
-    *   Saving processed frames to a structured output directory, mirroring the input structure.
-    *   Copying associated metadata files to the output directory.
-3.  **LLM-based Analysis (Future Milestone)**:
-    *   Sequences of extracted frames will be sent to a multi-modal LLM (e.g., Gemini via Vertex AI).
-    *   The LLM will use the `ocr_dataset_builder/prompts/ocr_image_multi_task_prompt.md` to perform detailed analysis on each frame and summarize the sequence.
-4.  **Output Generation**: The structured output from the LLM will be saved, likely in a JSON Lines format, associating the analysis with the source frames and video.
+1.  **Frame Extraction Pipeline (`frame_pipeline.py`)**: Ingests raw video datasets, extracts, processes (resizes, samples), and saves individual frames along with associated video metadata.
+2.  **Tesseract OCR Pipeline (`tesseract_pipeline.py`) (Optional)**: Processes extracted frames using Tesseract to generate baseline raw OCR text. This can serve as an input for comparison or potentially for the LLM at a later stage.
+3.  **LLM Analysis Pipeline (`llm_pipeline.py`)**: Takes sequences of extracted frames (and optionally, Tesseract OCR output), sends them to a multi-modal LLM (e.g., Gemini) using the detailed prompt, and processes the structured analytical output.
+4.  **Output Generation**: The final rich, structured data from the LLM pipeline is saved, linking back to the source video and frames.
 
 ## 3. Core Modules and Components
 
-### 3.1. Frame Extraction (`ocr_dataset_builder/video_processing.py`)
+### 3.1. Frame Extraction & Processing (`ocr_dataset_builder/video_processing.py`)
 
-*   **Purpose**: To efficiently extract and prepare frames from individual video files.
+*   **Purpose**: To efficiently extract, resize, sample, and save frames from individual video files.
 *   **Key Function**: `extract_frames()`
     *   **Input**: Video file path, output directory, target FPS, max dimension for resizing, max frames to sample.
-    *   **Process**:
-        1.  Opens video using OpenCV (`cv2.VideoCapture`).
-        2.  Calculates frame interval based on native FPS and target FPS.
-        3.  Iterates through video, extracting frames at the calculated interval.
-        4.  If `max_dimension` is set, resizes frames maintaining aspect ratio.
-        5.  Collects all candidate frames (path and image data).
-        6.  If `max_frames_per_video` is set and candidate count exceeds it, performs random sampling.
-        7.  Saves selected frames to the output directory with names like `frame_XXXXXX.jpg` (XXXXXX = second mark).
-    *   **Output**: List of paths to saved frames.
-    *   **Error Handling**: Logs errors and aims to be robust (e.g., skips problematic frames/videos).
-*   **Utilities**: `get_human_readable_size()` for logging.
+    *   **Process**: Uses OpenCV (`cv2`) for video operations. Detailed in its docstrings.
+    *   **Output**: List of paths to saved frames (e.g., `frame_XXXXXX.png`).
+*   **Utilities**: `get_human_readable_size()`.
 
-### 3.2. Pipeline Orchestration (e.g., `run_pipeline.py` - to be developed/reinstated)
+### 3.2. Frame Extraction Pipeline Orchestration (`ocr_dataset_builder/frame_pipeline.py`)
 
-*   **Purpose**: To manage the processing of an entire dataset of videos.
+*   **Purpose**: To manage the frame extraction process for an entire dataset of videos.
 *   **Responsibilities**:
-    *   Traverse the input dataset directory structure.
-    *   For each video subdirectory:
-        *   Locate the video file (handling various extensions).
-        *   Locate the metadata file (e.g., `.info.json`).
-        *   Create a corresponding output subdirectory.
-        *   Copy the metadata file to the output subdirectory.
-        *   Invoke `extract_frames()` from `video_processing.py` for the video.
-    *   **Parallel Processing**: Utilize `concurrent.futures.ProcessPoolExecutor` to process multiple video directories in parallel, improving throughput.
-    *   **Dataset Slicing**: Allow processing of a subset of videos using `start_index` and `end_index` parameters.
-    *   **CLI Interface**: Provide a command-line interface (e.g., using `fire`) for easy execution and parameterization.
-    *   **Progress Reporting**: Outer `tqdm` progress bar for directories, inner for frames (handled by `extract_frames`).
+    *   Traverses input dataset directory structure.
+    *   For each video subdirectory, invokes `video_processing.py`'s `extract_frames` function.
+    *   Handles parallel processing of video directories using `concurrent.futures.ProcessPoolExecutor`.
+    *   Copies metadata files (e.g., `.info.json`) to the mirrored output subdirectories.
+    *   Provides a CLI using `fire` (e.g., `process_videos` command) for specifying dataset paths, processing parameters (FPS, workers, slicing indices).
+    *   Includes `tqdm` progress bars.
 
-### 3.3. LLM Prompt (`ocr_dataset_builder/prompts/ocr_image_multi_task_prompt.md`)
+### 3.3. Tesseract OCR Processing (`ocr_dataset_builder/tesseract_processing.py`) (Optional)
+
+*   **Purpose**: To perform OCR on a single image frame using Tesseract.
+*   **Key Function**: (e.g., `ocr_frame_with_tesseract()`)
+    *   **Input**: Path to an image frame.
+    *   **Process**: Uses `pytesseract` to extract text from the image.
+    *   **Output**: Raw extracted text string.
+
+### 3.4. Tesseract OCR Pipeline Orchestration (`ocr_dataset_builder/tesseract_pipeline.py`) (Optional)
+
+*   **Purpose**: To apply Tesseract OCR across a dataset of extracted frames.
+*   **Responsibilities**:
+    *   Traverses directories containing frames (typically output from `frame_pipeline.py`).
+    *   For each frame, invokes `tesseract_processing.py`.
+    *   Saves the Tesseract output (e.g., as `.txt` files corresponding to each frame or a consolidated JSON).
+    *   Provides a CLI for specifying input frame directory, output directory, and Tesseract configurations.
+    *   May include parallel processing for frames.
+
+### 3.5. LLM Prompt (`ocr_dataset_builder/prompts/ocr_image_multi_task_prompt.md`)
 
 *   **Purpose**: To guide the LLM in analyzing frame sequences and producing structured data.
-*   **Design for Frame Sequences**:
-    *   **Input**: A sequence of N frames from a single video, presented sequentially.
-    *   **Task Adaptation**:
-        *   Tasks 1-4 (Raw OCR, Augmented OCR, Cleaned OCR, Structured Markdown) are applied **Per Frame**.
-        *   Task 5 (Narrative Summary) is applied **Per Sequence**, summarizing the activity across all N frames.
-    *   **Speaker Attribution**: Retains detailed rules for speaker identification and dialogue attribution, to be applied based on content visible within frames.
-    *   **Output Structure**: Defined with clear delimiters (`-- Frame X --`) for per-frame outputs, followed by a single block for the per-sequence summary. This facilitates parsing.
-    *   **Few-Shot Examples**: Adapted to reflect the per-frame/per-sequence output format, using conceptual translations of desktop screenshots to video frame content.
+*   **Design for Frame Sequences**: Tasks 1-4 per frame, Task 5 per sequence. Includes detailed speaker attribution and redundancy/appending rules.
 
-### 3.4. LLM Interaction Module (e.g., `llm_processing.py` - Future Milestone)
+### 3.6. LLM Interaction Module (`ocr_dataset_builder/llm_processing.py`)
 
-*   **Purpose**: To handle communication with the LLM API (e.g., Google Vertex AI for Gemini).
+*   **Purpose**: To handle direct communication with the LLM API (e.g., Google Vertex AI for Gemini) for a single sequence of frames.
 *   **Responsibilities**:
-    *   Take a sequence of frame image data (and potentially paths or other metadata).
-    *   Load and format the multi-task prompt.
-    *   Construct the API request with the prompt and image data.
-    *   Handle API calls, including authentication (e.g., using `GOOGLE_API_KEY` from `.env`).
-    *   Manage API responses, including retries or error handling.
-    *   Parse the LLM's structured text output into a machine-readable format (e.g., Python dictionaries).
+    *   Takes a sequence of N frame image data (and potentially paths or other metadata like Tesseract output) and the formatted prompt.
+    *   Constructs and executes the API request.
+    *   Handles API responses, including retries and error management for a single call.
+    *   Parses the LLM's structured text output into a machine-readable format (e.g., Python dictionaries) according to the prompt's specifications.
+
+### 3.7. LLM Analysis Pipeline Orchestration (`ocr_dataset_builder/llm_pipeline.py`)
+
+*   **Purpose**: To manage the LLM-based analysis for an entire dataset of frame sequences.
+*   **Responsibilities**:
+    *   Identifies and batches sequences of N frames from the output of `frame_pipeline.py`.
+    *   For each sequence, invokes `llm_processing.py`.
+    *   Collects and aggregates the structured LLM outputs.
+    *   Handles overall progress tracking, logging, and error management for the batch LLM analysis.
+    *   Provides a CLI for specifying input frame sequence directory (from `frame_pipeline.py`), output directory for LLM results, LLM model parameters, and batching configurations.
+    *   Saves the final aggregated and structured LLM analysis data (e.g., as JSON Lines).
 
 ## 4. Data Flow
 
-1.  User specifies `dataset_path`, `output_path`, and other processing parameters (FPS, workers, etc.) to the pipeline script.
-2.  The pipeline script scans `dataset_path` for video subdirectories.
-3.  For each video directory processed (in parallel):
-    a.  Video file and `.info.json` are identified.
-    b.  An output subdirectory is created under `output_path`.
-    c.  `.info.json` is copied to the output subdirectory.
-    d.  `extract_frames()` is called with the video path and its corresponding output subdirectory.
-    e.  `extract_frames()` reads the video, extracts, resizes, samples, and saves frames as `frame_XXXXXX.jpg` in the designated output folder.
-4.  (Future) The LLM processing module will:
-    a.  Read sequences of frames from the `output_path`.
-    b.  Send frame data and the prompt to the LLM.
-    c.  Receive structured text output.
-    d.  Parse and save this output, linking it back to the source video/frames.
+1.  **Input**: User provides `dataset_path` (containing video subdirectories) to `frame_pipeline.py`.
+2.  **`frame_pipeline.py`**: Processes videos in parallel.
+    a.  For each video: uses `video_processing.py` to extract, resize, sample frames.
+    b.  Saves frames (e.g., `output_path/video_id/frame_XXXXXX.png`) and copies metadata (e.g., `output_path/video_id/video.info.json`).
+3.  **(Optional) `tesseract_pipeline.py`**: User points this pipeline to the frame output directory from step 2.
+    a.  Processes frames using `tesseract_processing.py`.
+    b.  Saves raw text output (e.g., `tesseract_output_path/video_id/frame_XXXXXX.txt`).
+4.  **`llm_pipeline.py`**: User points this pipeline to the frame output directory (from step 2) and optionally to Tesseract output (from step 3).
+    a.  Identifies sequences of N frames per video.
+    b.  For each sequence: uses `llm_processing.py` to interact with the Gemini LLM using `ocr_image_multi_task_prompt.md`.
+    c.  Receives structured text output from the LLM.
+    d.  Parses and saves this rich analysis, often in a structured format like JSONL (e.g., `llm_output_path/video_id/analysis_batch_Y.jsonl`), linking back to frame numbers and video ID.
 
 ## 5. Key Design Decisions & Considerations
 
-*   **Modularity**: Separating frame extraction, pipeline orchestration, and LLM interaction into distinct modules enhances maintainability and testability.
-*   **Parallelism**: Processing videos in parallel is crucial for handling large datasets efficiently.
-*   **Configuration**: Using command-line arguments for key parameters allows flexibility.
-*   **Robustness**: Logging and error handling at various stages help in diagnosing issues without catastrophic failure.
-*   **Mirrored Output Structure**: Replicating the input dataset structure in the output directory for frames and metadata simplifies data management and association.
-*   **Prompt Adaptability**: The core LLM prompt, originally for desktop screenshots, was carefully adapted to handle sequences of video frames, maintaining its analytical depth while accommodating the new input modality.
-*   **Environment Management**: Using Conda and Poetry (`pyproject.toml`, `install-conda-env.sh`) ensures a reproducible and isolated environment.
+*   **Modular Pipelines**: Separating frame extraction, optional Tesseract OCR, and LLM analysis into distinct, chained pipelines enhances modularity, testability, and allows for independent execution or re-runs of specific stages.
+*   **Parallelism**: Employed within each relevant pipeline (e.g., per-video in `frame_pipeline.py`, potentially per-frame or per-sequence in other pipelines) to maximize throughput.
+*   **Configuration**: CLIs for each pipeline provide flexibility.
+*   **Robustness**: Logging and error handling are critical at each stage.
+*   **Mirrored Output Structure**: `frame_pipeline.py` maintains a mirrored structure, simplifying data association for subsequent pipelines.
+*   **Prompt-Driven LLM Interaction**: The `ocr_image_multi_task_prompt.md` is central to the LLM's analytical capabilities.
 
 ## 6. Future Enhancements
 
-*   Integration of subtitle data (`.vtt` files) as additional context for the LLM.
-*   More sophisticated frame selection logic (e.g., scene change detection, content-based filtering) beyond simple FPS and random sampling.
+*   Integration of subtitle data (`.vtt` files) as additional context for the LLM within `llm_pipeline.py`.
+*   More sophisticated frame selection in `video_processing.py` (e.g., scene change detection).
 *   Support for various output formats for the LLM data.
-*   Containerization with Docker for easier deployment. 
+*   Containerization with Docker for all pipelines. 
