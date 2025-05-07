@@ -4,10 +4,6 @@ import logging
 import sys
 from pathlib import Path
 
-# Ensure the package modules can be found if running as a script
-project_root = Path(__file__).resolve().parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
 
 try:
     from ocr_dataset_builder.pytorch_dataset import OcrMultimodalDataset

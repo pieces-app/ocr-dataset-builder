@@ -20,11 +20,6 @@ logging.basicConfig(
 
 # Load environment variables
 load_dotenv()
-# --- Configuration ---
-# Model name - align with example or keep flexible?
-# Using the specific one from example-vertex.py for now
-# MODEL_NAME = "gemini-2.5-pro-preview-03-25"  # Explicitly set model
-MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-pro-exp-03-25")
 SAFETY_SETTINGS = [
     types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
     types.SafetySetting(
@@ -182,18 +177,18 @@ def process_image_sequence(
     )
 
     try:
-        logging.info(
-            f"Sending request to model {MODEL_NAME} via Vertex AI Client..."
-        )
+        # logging.info(
+        #     f"Sending request to model {MODEL_NAME} via Vertex AI Client..."
+        # )
         # Call generate_content using the client.models attribute
         # Pass the list of parts directly as contents, following user example
         num_input_tokens = client.models.count_tokens(
-            model=MODEL_NAME,
+            model="gemini-2.5-pro-preview-03-25",
             contents=parts_list,
         ).total_tokens
         text_response = ""
         for chunk in client.models.generate_content_stream(
-            model=MODEL_NAME,
+            model="gemini-2.5-pro-preview-03-25",
             contents=parts_list,
             config=generation_config,
         ):
@@ -202,7 +197,7 @@ def process_image_sequence(
                 if print_output:
                     print(chunk.text, end="")
         num_output_tokens = client.models.count_tokens(
-            model=MODEL_NAME,
+            model="gemini-2.5-pro-preview-03-25",
             contents=text_response,
         ).total_tokens
         if print_counts:
@@ -407,7 +402,7 @@ if __name__ == "__main__":
 
     # 4. Process Sequence (using client)
     print(
-        f"\n--- Calling Gemini API ({MODEL_NAME}) with "
+        f"\n--- Calling Gemini API with "
         f"{len(sample_image_paths)} frames --- "
     )
     start_time = time.time()

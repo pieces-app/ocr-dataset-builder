@@ -15,9 +15,6 @@ from tqdm import tqdm
 
 # from rich import print # Removed unused import
 
-# Ensure the package modules can be found
-project_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(project_root))
 
 # Import necessary functions from the other modules
 from ocr_dataset_builder.llm_processing import (
@@ -45,7 +42,7 @@ DEFAULT_PROMPT_PATH = Path(
     "ocr_dataset_builder/prompts/ocr_image_multi_task_prompt.md"
 )  # Wrapped long line
 # Read default model name from env
-DEFAULT_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-1.5-pro-latest")
+DEFAULT_MODEL_NAME = "gemini-2.5-pro-preview-03-25"
 
 # --- Cost Calculation Function ---
 

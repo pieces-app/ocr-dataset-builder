@@ -12,9 +12,6 @@ import fire  # Import fire for CLI
 from rich.logging import RichHandler  # Added for rich logging
 from tqdm import tqdm
 
-# Ensure the package modules can be found
-project_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(project_root))
 
 from ocr_dataset_builder.video_processing import extract_frames
 
