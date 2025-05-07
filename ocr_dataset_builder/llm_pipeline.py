@@ -42,71 +42,92 @@ DEFAULT_PROMPT_PATH = Path(
     "ocr_dataset_builder/prompts/ocr_image_multi_task_prompt.md"
 )  # Wrapped long line
 # Read default model name from env
-DEFAULT_MODEL_NAME = "gemini-2.5-pro-preview-03-25"
+DEFAULT_MODEL_NAME = os.getenv("DEFAULT_GEMINI_MODEL", "gemini-1.5-pro-latest") # Updated default
 
 # --- Cost Calculation Function ---
 
+# Rates for Gemini 1.5 Pro (USD per 1 million tokens)
+# Verify these rates with official Google Cloud documentation.
+GEMINI_1_5_PRO_RATES_CONFIG = {
+    "<128k": {"input": 3.50, "output": 10.50},
+    ">=128k": {"input": 7.00, "output": 21.00},
+    "threshold_k": 128,
+}
+
+MODEL_PRICING = {
+    "gemini-1.5-pro-latest": GEMINI_1_5_PRO_RATES_CONFIG,
+    "gemini-1.5-pro-001": GEMINI_1_5_PRO_RATES_CONFIG, # Explicit alias
+    "gemini-2.5-pro-preview-03-25": GEMINI_1_5_PRO_RATES_CONFIG, # User-mentioned alias, assuming same rates
+    # Add other 1.5 Pro variants if they share these rates
+}
 
 def calculate_gemini_cost(
     model_name: str,
-    input_tokens: int | CountTokensResponse,
-    output_tokens: int | CountTokensResponse,
+    input_tokens_data: int | CountTokensResponse,
+    output_tokens_data: int | CountTokensResponse,
 ) -> float:
     """
-    Calculates the estimated cost for a Gemini API call based on token counts.
+    Calculates the estimated cost for a Gemini 1.5 Pro API call based on token counts.
 
     Args:
-        model_name: The name of the model used (e.g., "gemini-1.5-pro-latest").
-        input_tokens: The number of input tokens.
-        output_tokens: The number of output tokens (including thinking).
+        model_name: The name of the Gemini 1.5 Pro model variant used.
+        input_tokens_data: The number of input tokens or CountTokensResponse.
+        output_tokens_data: The number of output tokens or CountTokensResponse.
 
     Returns:
-        The estimated cost in USD, or 0.0 if pricing is not defined.
+        The estimated cost in USD, or 0.0 if pricing is not defined for the model.
     """
-    # Rates per 1 million tokens in USD.
+    pricing_config = MODEL_PRICING.get(model_name)
 
-    (
-        input_rate_low,
-        output_rate_low,
-        input_rate_high,
-        output_rate_high,
-        threshold_k,
-    ) = (
-        1.25,
-        10.00,
-        2.50,
-        15.00,
-        200,
-    )
+    if not pricing_config:
+        # Try a base name if a specific version like -001 isn't found
+        base_model_name = "gemini-1.5-pro-latest" if "1.5-pro" in model_name else None
+        if base_model_name:
+            pricing_config = MODEL_PRICING.get(base_model_name)
+        
+        if not pricing_config:
+            logging.warning(
+                f"Pricing config not found for model '{model_name}'. Cost calculation will be 0."
+            )
+            return 0.0
 
-    threshold = threshold_k * 1000  # Convert k to actual token count
-    if isinstance(input_tokens, CountTokensResponse):
-        input_tokens = input_tokens.total_tokens
-    if isinstance(output_tokens, CountTokensResponse):
-        output_tokens = output_tokens.total_tokens
+    input_tokens = 0
+    if isinstance(input_tokens_data, CountTokensResponse):
+        input_tokens = input_tokens_data.total_tokens
+    elif isinstance(input_tokens_data, int):
+        input_tokens = input_tokens_data
 
-    current_input_tokens = input_tokens if input_tokens is not None else 0
-    current_output_tokens = output_tokens if output_tokens is not None else 0
+    output_tokens = 0
+    if isinstance(output_tokens_data, CountTokensResponse):
+        output_tokens = output_tokens_data.total_tokens
+    elif isinstance(output_tokens_data, int):
+        output_tokens = output_tokens_data
+    
+    threshold_k = pricing_config.get("threshold_k", 128)
+    threshold_tokens = threshold_k * 1000
+    
+    rates_key = "<128k" if input_tokens < threshold_tokens else ">=128k"
+    specific_rates = pricing_config.get(rates_key)
+    
+    if not specific_rates or not isinstance(specific_rates, dict):
+        logging.warning(
+            f"Tiered rates for '{rates_key}' not found for model '{model_name}'. Cost calculation will be 0."
+        )
+        return 0.0
 
-    if current_input_tokens <= threshold:
-        input_rate = input_rate_low
-        output_rate = output_rate_low
-    else:
-        input_rate = input_rate_high
-        output_rate = output_rate_high
+    input_rate = specific_rates.get("input", 0.0)  # Per 1M tokens
+    output_rate = specific_rates.get("output", 0.0) # Per 1M tokens
 
-    input_cost = (current_input_tokens / 1_000_000) * input_rate
-    output_cost = (current_output_tokens / 1_000_000) * output_rate
+    input_cost = (input_tokens / 1_000_000) * input_rate
+    output_cost = (output_tokens / 1_000_000) * output_rate
     total_cost = input_cost + output_cost
 
-    # Debug log with formatted costs
     logging.debug(
-        f"Cost calc ({model_name}, Thresh: {threshold_k}k): "  # Wrapped long line
-        f"In:{current_input_tokens}tk@${input_rate}/M=${input_cost:.6f}, "
-        f"Out:{current_output_tokens}tk@${output_rate}/M=${output_cost:.6f}, "
+        f"Cost calc ({model_name}, Tier: {rates_key}): "
+        f"In:{input_tokens}tk @ ${input_rate:.2f}/M = ${input_cost:.6f}, "
+        f"Out:{output_tokens}tk @ ${output_rate:.2f}/M = ${output_cost:.6f}, "
         f"Total=${total_cost:.6f}"
     )
-
     return total_cost
 
 
@@ -118,9 +139,9 @@ def _process_frame_batch(
     output_json_path: Path,
     prompt_text: str,
     batch_index: int,
-    total_batches_for_dir: int,  # Renamed for clarity
+    total_batches_for_dir: int,
     model_name: str,
-    video_dir_relative_path: str,  # Added for context in logging
+    video_dir_relative_path: str,
 ) -> tuple[str, str, float | None, int | None]:
     """
     Processes a single batch of frames using the LLM and calculates cost.
@@ -156,24 +177,25 @@ def _process_frame_batch(
             client=gemini_client,
             image_paths=batch_frame_paths,
             prompt_text=prompt_text,
+            model_name=model_name, # Pass model_name to process_image_sequence
         )
 
-        raw_response, input_tokens, output_tokens = None, None, None
+        raw_response, input_tokens_data, output_tokens_data = None, None, None # Renamed for clarity
         if result_tuple:
-            raw_response, input_tokens, output_tokens = result_tuple
+            raw_response, input_tokens_data, output_tokens_data = result_tuple
         else:
             message = f"[{batch_repr}] Failed getting LLM response/tokens."
             logging.error(message)
             return status, message, cost, num_frames
 
-        if input_tokens is not None and output_tokens is not None:
+        if input_tokens_data is not None and output_tokens_data is not None:
             cost = calculate_gemini_cost(
-                model_name, input_tokens, output_tokens
+                model_name, input_tokens_data, output_tokens_data
             )
             logging.info(f"[{batch_repr}] Estimated cost: ${cost:.4f}")
         else:
             logging.warning(
-                f"[{batch_repr}] Tokens missing, cannot calc cost."
+                f"[{batch_repr}] Tokens/char count data missing, cannot calc cost."
             )
 
         parsed_data = parse_llm_response(raw_response)
@@ -206,15 +228,14 @@ def _process_video_directory_llm(
     prompt_text: str,
     batch_size: int,
     model_name: str,
-    max_workers_for_batches: (
-        int | None
-    ),  # Max workers for batches within this dir
-) -> tuple[
-    str, int, int, float
-]:  # dir_relative_path, total_batches, successful_batches, total_cost
-    """Processes all frame batches for a single video directory and manages its checkpointing status."""
+    max_workers_for_batches: int | None,
+) -> tuple[str, int, int, float, int]: # dir_relative_path, total_batches, successful_batches, total_cost, total_frames_in_dir
+    """
+    Processes all frame batches for a single video directory.
+    Returns stats for this directory.
+    """
     logging.info(
-        f"Starting LLM processing for directory: {frame_dir_relative_path}"
+        f"Starting LLM processing for directory: {frame_dir_relative_path} using model {model_name}"
     )
     all_frames = sorted(frame_dir_absolute_path.glob("frame_*.png"))
     if not all_frames:
@@ -226,262 +247,215 @@ def _process_video_directory_llm(
         )
         return (
             frame_dir_relative_path,
-            0,
-            0,
-            0.0,
-        )  # No batches, 0 successful, 0 cost
+            0, # total_batches
+            0, # successful_batches
+            0.0, # total_cost
+            0, # total_frames_in_dir
+        )
 
-    total_frames = len(all_frames)
-    num_batches = math.ceil(total_frames / batch_size)
+    total_frames_in_dir = len(all_frames)
+    num_batches = math.ceil(total_frames_in_dir / batch_size)
     logging.info(
-        f"Directory {frame_dir_relative_path}: {total_frames} frames, {num_batches} batches of size {batch_size}."
+        f"Directory {frame_dir_relative_path}: {total_frames_in_dir} frames, {num_batches} batches of size {batch_size}."
     )
 
     video_output_dir = output_root / frame_dir_relative_path
     video_output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Simple batch checkpointing within a video directory (optional, for very large videos)
-    # For now, we assume a video directory is the unit of checkpointing for the main pipeline.
-
     batch_futures = []
-    processed_batches_count = 0
     successful_batches_count = 0
     dir_total_cost = 0.0
-
-    # Determine actual number of workers for batches if None
-    actual_max_workers_batches = max_workers_for_batches
-    if actual_max_workers_batches is None:
-        actual_max_workers_batches = os.cpu_count()
-        logging.debug(f"Defaulting max_workers_for_batches to CPU count: {actual_max_workers_batches}")
-    elif actual_max_workers_batches <= 0:
-        actual_max_workers_batches = 1 # Ensure at least one worker
-        logging.debug("max_workers_for_batches was <= 0, setting to 1.")
+    # Ensure max_workers_for_batches is at least 1 if not None
+    current_max_batch_workers = max_workers_for_batches
+    if current_max_batch_workers is not None and current_max_batch_workers < 1:
+        current_max_batch_workers = 1
+    elif current_max_batch_workers is None: # if None, use a sensible default or make it sequential
+        current_max_batch_workers = 1 # Defaulting to sequential if not specified to avoid overwhelming API
 
     with concurrent.futures.ProcessPoolExecutor(
-        max_workers=actual_max_workers_batches # Use the determined value
-        # mp_context=concurrent.futures.get_context("spawn"), # Removed mp_context
+        max_workers=current_max_batch_workers 
     ) as batch_executor:
         for i in range(num_batches):
-            start_frame_idx = i * batch_size
-            end_frame_idx = start_frame_idx + batch_size
-            current_batch_frames = all_frames[start_frame_idx:end_frame_idx]
-            output_json_file = (
-                video_output_dir / f"llm_output_batch_{i+1:04d}.json"
-            )
-
-            # Potentially skip already processed batches if we add intra-directory checkpointing later
+            batch_start = i * batch_size
+            batch_end = batch_start + batch_size
+            current_batch_frames = all_frames[batch_start:batch_end]
+            output_file_name = f"llm_output_batch_{i:04d}.json"
+            output_json_path = video_output_dir / output_file_name
 
             future = batch_executor.submit(
                 _process_frame_batch,
                 current_batch_frames,
-                output_json_file,
+                output_json_path,
                 prompt_text,
-                i,  # batch_index
-                num_batches,  # total_batches_for_dir
+                i, # batch_index
+                num_batches, # total_batches_for_dir
                 model_name,
-                frame_dir_relative_path,  # Pass relative path for logging
+                frame_dir_relative_path,
             )
             batch_futures.append(future)
-
-        for future in concurrent.futures.as_completed(batch_futures):
-            processed_batches_count += 1
+        
+        batch_progress_desc = f"{frame_dir_relative_path[:20]} Batches"
+        for future in tqdm(
+            concurrent.futures.as_completed(batch_futures),
+            total=num_batches,
+            desc=batch_progress_desc,
+            leave=False,
+            ncols=100
+        ):
             try:
-                status, _, cost, _ = future.result()
+                status, msg, cost, _ = future.result()
                 if status == "Success":
                     successful_batches_count += 1
                     if cost is not None:
                         dir_total_cost += cost
-                # Detailed error logging happens in _process_frame_batch
-            except Exception as exc:
-                logging.error(
-                    f"Error processing a batch future for {frame_dir_relative_path}: {exc}"
-                )
+                else:
+                    logging.error(f"Batch failed for {frame_dir_relative_path}: {msg}")
+            except Exception as e:
+                logging.error(f"Error processing a batch future for {frame_dir_relative_path}: {e}", exc_info=True)
 
-    if successful_batches_count == num_batches and num_batches > 0:
-        logging.info(
-            f"Successfully processed all {num_batches} batches for {frame_dir_relative_path}. Total cost: ${dir_total_cost:.4f}"
-        )
-        return (
-            frame_dir_relative_path,
-            num_batches,
-            successful_batches_count,
-            dir_total_cost,
-        )
-    elif num_batches == 0:  # No frames found, but directory existed
-        logging.info(
-            f"No batches to process for {frame_dir_relative_path} (no frames). Considered complete for checkpointing."
-        )
-        return frame_dir_relative_path, 0, 0, 0.0
-    else:
-        logging.error(
-            f"Directory {frame_dir_relative_path}: Only {successful_batches_count}/{num_batches} batches succeeded. Will not checkpoint as fully complete."
-        )
-        return (
-            frame_dir_relative_path,
-            num_batches,
-            successful_batches_count,
-            dir_total_cost,
-        )  # Still return info
-
-
-def run_llm_pipeline(
-    input_dir: str = "./extracted_frames",
-    output_dir: str = "./llm_output",
-    batch_size: int = 60,
-    max_workers_dirs: int | None = 2,  # Max parallel video directories
-    max_workers_batches_per_dir: (
-        int | None
-    ) = 2,  # Max parallel batches within one dir
-    start_index: int | None = None,
-    end_index: int | None = None,
-    prompt_path: str = str(DEFAULT_PROMPT_PATH),
-    model_name: str = DEFAULT_MODEL_NAME,
-    checkpoint_file_name: str = ".processed_llm_video_dirs.log",
-):
-    """
-    Runs the LLM processing pipeline on extracted frames with checkpointing per video directory.
-    Args:
-        input_dir: Root directory containing the extracted frames (subdirs per video).
-        output_dir: Root directory to save the LLM processing results & checkpoint.
-        batch_size: Number of frames to process in each LLM call (per batch).
-        max_workers_dirs: Max parallel video directories to process. Defaults to 2.
-        max_workers_batches_per_dir: Max parallel batches for frames within a single directory. Defaults to 2.
-        start_index: 0-based index of the first video directory to process (after checkpoint).
-        end_index: 0-based index *after* the last video directory (after checkpoint).
-        prompt_path: Path to the LLM prompt file.
-        model_name: Gemini model name.
-        checkpoint_file_name: Log file for successfully processed video directories.
-    """
-    input_root = Path(input_dir).resolve()
-    output_root = Path(output_dir).resolve()
-    output_root.mkdir(parents=True, exist_ok=True)
-
-    logging.info("--- Starting LLM Pipeline ---")
-    logging.info(f"Input Frame Directory: {input_root}")
-    logging.info(f"Output JSON Directory: {output_root}")
-    logging.info(f"Checkpoint file: {output_root / checkpoint_file_name}")
-    logging.info(f"Batch Size: {batch_size}")
     logging.info(
-        f"Max Workers Dirs: {max_workers_dirs if max_workers_dirs else 'CPU Count'}"
+        f"Finished directory {frame_dir_relative_path}: {successful_batches_count}/{num_batches} batches successful. Total cost: ${dir_total_cost:.4f}"
     )
-    logging.info(
-        f"Max Workers Batches per Dir: {max_workers_batches_per_dir if max_workers_batches_per_dir else 'Default'}"
+    return (
+        frame_dir_relative_path,
+        num_batches,
+        successful_batches_count,
+        dir_total_cost,
+        total_frames_in_dir,
     )
-    logging.info(f"Using Prompt: {prompt_path}")
-    logging.info(f"Using Model: {model_name}")
 
-    try:
-        prompt_text = load_prompt(prompt_path)
-        logging.info(f"Loaded prompt: {prompt_path}")
-    except Exception as e:
-        logging.error(
-            f"Failed to load prompt {prompt_path}: {e}. Exiting.",
-            exc_info=True,
-        )
-        return
 
-    # --- Checkpoint Loading ---
+def _perform_llm_processing_pass(
+    input_root: Path,
+    output_root: Path,
+    prompt_text: str,
+    batch_size: int,
+    model_name: str,
+    max_workers_dirs: int | None,
+    max_workers_batches_per_dir: int | None,
+    effective_start_index: int | None,
+    effective_end_index: int | None,
+    checkpoint_file_name: str,
+) -> tuple[int, int, int, float, int]: # dirs_attempted, dirs_successful, dirs_failed, total_cost_pass, total_frames_pass
+    """
+    Performs a single pass of discovering and processing video directories with LLM.
+    """
     checkpoint_path = output_root / checkpoint_file_name
-    processed_video_dirs_from_checkpoint = set()
+    processed_dirs_from_checkpoint = set()
+    malformed_checkpoint_entries = 0
+    max_path_len_checkpoint = 1024 # Arbitrary reasonable limit for a single path
+
     if checkpoint_path.is_file():
         try:
             with open(checkpoint_path, "r") as f:
-                for line in f:
-                    processed_video_dirs_from_checkpoint.add(line.strip())
-            logging.info(
-                f"Loaded {len(processed_video_dirs_from_checkpoint)} processed video dirs from checkpoint."
-            )
-        except Exception as e:
-            logging.error(
-                f"Could not read checkpoint {checkpoint_path}: {e}. Processing all."
-            )
-            processed_video_dirs_from_checkpoint.clear()
+                for line_num, line in enumerate(f):
+                    path_str = line.strip()
+                    # Add check for malformed/long lines
+                    if not path_str: # Skip empty lines
+                        continue
+                    if '\\n' in path_str or '\r' in path_str: # Check for embedded newlines
+                        logging.warning(
+                            f"Skipping malformed entry in checkpoint {checkpoint_path} (line ~{line_num+1}): Contains newline characters."
+                        )
+                        malformed_checkpoint_entries += 1
+                        continue
+                    if len(path_str) > max_path_len_checkpoint:
+                        logging.warning(
+                            f"Skipping malformed entry in checkpoint {checkpoint_path} (line ~{line_num+1}): Exceeds max length {max_path_len_checkpoint}. Entry: \"{path_str[:80]}...\""
+                        )
+                        malformed_checkpoint_entries += 1
+                        continue
+                    
+                    processed_dirs_from_checkpoint.add(path_str)
 
-    # --- Re-indexing and Filtering video directories ---
-    all_potential_video_dirs_abs = sorted(
+            logging.info(
+                f"Loaded {len(processed_dirs_from_checkpoint)} valid processed dirs from checkpoint: {checkpoint_path}"
+            )
+            if malformed_checkpoint_entries > 0:
+                 logging.warning(f"Skipped {malformed_checkpoint_entries} potentially malformed entries during checkpoint load.")
+
+        except Exception as e:
+            logging.error(f"Could not read LLM checkpoint {checkpoint_path}: {e}")
+            processed_dirs_from_checkpoint.clear()
+            malformed_checkpoint_entries = 0 # Reset counter on read error
+
+    all_potential_input_dirs_abs = sorted(
         [d for d in input_root.iterdir() if d.is_dir()]
     )
-    all_potential_video_dirs_rel = [
+    all_potential_input_dirs_rel = [
         d.relative_to(input_root).as_posix()
-        for d in all_potential_video_dirs_abs
+        for d in all_potential_input_dirs_abs
     ]
     logging.info(
-        f"Found {len(all_potential_video_dirs_rel)} potential video directories in input."
+        f"Found {len(all_potential_input_dirs_rel)} potential input directories in {input_root}."
     )
 
-    valid_processed_rel_paths = {
+    valid_processed_relative_paths = {
         path_str
-        for path_str in processed_video_dirs_from_checkpoint
+        for path_str in processed_dirs_from_checkpoint
         if (input_root / path_str).is_dir()
     }
-    # ... (log stale paths removed) ...
+    if len(valid_processed_relative_paths) < len(processed_dirs_from_checkpoint):
+        logging.info(
+            f"{len(processed_dirs_from_checkpoint) - len(valid_processed_relative_paths)} stale LLM dir paths removed from checkpoint."
+        )
 
-    relative_video_dirs_to_consider = sorted(
-        [
-            rel_path
-            for rel_path in all_potential_video_dirs_rel
-            if rel_path not in valid_processed_rel_paths
-        ]
-    )
+    relative_dirs_to_consider = sorted([
+        rel_path
+        for rel_path in all_potential_input_dirs_rel
+        if rel_path not in valid_processed_relative_paths
+    ])
     logging.info(
-        f"{len(relative_video_dirs_to_consider)} video directories to consider after checkpoint."
+        f"{len(relative_dirs_to_consider)} input directories to consider for LLM processing after checkpoint."
     )
 
-    # ... (Apply start_index and end_index to relative_video_dirs_to_consider) ...
-    total_dirs_to_consider = len(relative_video_dirs_to_consider)
-    actual_start_index = start_index if start_index is not None else 0
+    total_dirs_to_consider = len(relative_dirs_to_consider)
+    actual_start_index = effective_start_index if effective_start_index is not None else 0
     actual_end_index = (
-        end_index if end_index is not None else total_dirs_to_consider
+        effective_end_index if effective_end_index is not None else total_dirs_to_consider
     )
-    # ... (validate indices) ...
-    if not (0 <= actual_start_index <= total_dirs_to_consider):
-        logging.error(f"Invalid start_index for LLM pipeline.")
-        return
-    if not (actual_start_index <= actual_end_index <= total_dirs_to_consider):
-        logging.error(f"Invalid end_index for LLM pipeline.")
-        return
+    actual_start_index = max(0, actual_start_index)
+    actual_end_index = min(total_dirs_to_consider, actual_end_index)
 
-    sliced_relative_dirs_for_this_run = relative_video_dirs_to_consider[
+    if actual_start_index >= actual_end_index:
+        logging.info("No new input directories for LLM processing in this pass.")
+        return 0, 0, 0, 0.0, 0
+
+    sliced_relative_dirs_for_this_run = relative_dirs_to_consider[
         actual_start_index:actual_end_index
     ]
-    target_dir_count = len(sliced_relative_dirs_for_this_run)
+    absolute_dirs_for_this_run_map = {
+        rel_path: (input_root / rel_path)
+        for rel_path in sliced_relative_dirs_for_this_run
+    }
+    target_dir_count_this_pass = len(sliced_relative_dirs_for_this_run)
 
-    if target_dir_count == 0:
-        logging.info(
-            "No video directories selected for LLM processing in this run."
-        )
-        return
+    if target_dir_count_this_pass == 0:
+        logging.info("No input directories selected for LLM processing this pass.")
+        return 0, 0, 0, 0.0, 0
 
     logging.info(
-        f"Targeting {target_dir_count} video directories for LLM processing this run."
+        f"Targeting {target_dir_count_this_pass} input directories for LLM processing this pass (slice {actual_start_index} to {actual_end_index-1})."
     )
 
-    overall_start_time = time.time()
-    total_processed_dirs_this_run = 0
-    total_successful_dirs_this_run = 0
-    grand_total_cost_this_run = 0.0
+    pass_dirs_attempted = target_dir_count_this_pass
+    pass_dirs_successful = 0
+    pass_dirs_failed = 0
+    pass_total_cost = 0.0
+    pass_total_frames_processed = 0
+    
+    # Ensure max_workers_dirs is at least 1 if not None
+    current_max_dir_workers = max_workers_dirs
+    if current_max_dir_workers is not None and current_max_dir_workers < 1:
+        current_max_dir_workers = 1
+    elif current_max_dir_workers is None:
+        current_max_dir_workers = 1 # Defaulting to sequential for dirs if not specified
 
-    # --- Main Processing Logic ---
-    logging.info(f"Submitting {target_dir_count} video directory tasks to ProcessPoolExecutor...")
-    futures_dirs = []
-
-    # Determine actual number of workers for directories if None
-    actual_max_workers_dirs = max_workers_dirs
-    if actual_max_workers_dirs is None:
-        actual_max_workers_dirs = os.cpu_count()
-        logging.debug(f"Defaulting max_workers_dirs to CPU count: {actual_max_workers_dirs}")
-    elif actual_max_workers_dirs <= 0:
-        actual_max_workers_dirs = 1 # Ensure at least one worker
-        logging.debug("max_workers_dirs was <= 0, setting to 1.")
-
-    with concurrent.futures.ProcessPoolExecutor(
-        max_workers=actual_max_workers_dirs # Use the determined value
-        # mp_context=concurrent.futures.get_context("spawn"), # Removed mp_context
-    ) as executor_dirs:
-        # Submit tasks for each directory to be processed
+    dir_futures = []
+    with concurrent.futures.ProcessPoolExecutor(max_workers=current_max_dir_workers) as dir_executor:
         for rel_path in sliced_relative_dirs_for_this_run:
-            abs_path = input_root / rel_path
-            future = executor_dirs.submit(
+            abs_path = absolute_dirs_for_this_run_map[rel_path]
+            future = dir_executor.submit(
                 _process_video_directory_llm,
                 abs_path,
                 rel_path,
@@ -491,80 +465,244 @@ def run_llm_pipeline(
                 model_name,
                 max_workers_batches_per_dir,
             )
-            futures_dirs.append(future)
+            dir_futures.append(future)
 
-        progress_bar = tqdm(
-            concurrent.futures.as_completed(futures_dirs),
-            total=target_dir_count,
-            unit="dir",
-            desc="LLM Video Dirs",
-        )
-        for future in progress_bar:
-            total_processed_dirs_this_run += 1
+        dir_progress_desc = "Processing Dirs (LLM Pass)"
+        for future in tqdm(
+            concurrent.futures.as_completed(dir_futures),
+            total=target_dir_count_this_pass,
+            desc=dir_progress_desc,
+            ncols=100
+        ):
             try:
-                returned_rel_path, total_b, successful_b, dir_cost = (
-                    future.result()
-                )
-                grand_total_cost_this_run += dir_cost
-                if (
-                    total_b == 0 or successful_b == total_b
-                ):  # All batches (even 0) succeeded
-                    total_successful_dirs_this_run += 1
+                (
+                    returned_relative_path,
+                    total_batches_in_dir,
+                    successful_batches_in_dir,
+                    dir_cost,
+                    frames_in_dir,
+                ) = future.result()
+                
+                pass_total_cost += dir_cost
+                pass_total_frames_processed += frames_in_dir # All frames in dir were targeted for batching
+
+                # A directory is considered successful if all its batches were successful.
+                # Or, if it had no batches (e.g. no frames) but didn't error.
+                if total_batches_in_dir == 0 and successful_batches_in_dir == 0: # No frames, not an error
+                    pass_dirs_successful += 1 
+                    # Checkpoint empty/skipped dirs to avoid reprocessing them
                     try:
                         with open(checkpoint_path, "a") as cp_f:
-                            cp_f.write(f"{returned_rel_path}\n")
-                        logging.info(
-                            f"Checkpointed LLM dir: {returned_rel_path} (Cost: ${dir_cost:.4f})"
-                        )
+                            cp_f.write(f"{returned_relative_path}\\n")
+                        logging.debug(f"LLM Checkpointed empty/skipped dir: {returned_relative_path}")
                     except Exception as cp_e:
-                        logging.error(
-                            f"Failed to write LLM checkpoint for {returned_rel_path}: {cp_e}"
-                        )
-                else:
-                    logging.error(
-                        f"LLM processing for dir {returned_rel_path} was partial ({successful_b}/{total_b} batches). Not checkpointed."
+                        logging.error(f"Failed to checkpoint empty LLM dir {returned_relative_path}: {cp_e}")
+                elif successful_batches_in_dir == total_batches_in_dir and total_batches_in_dir > 0:
+                    pass_dirs_successful += 1
+                    try:
+                        with open(checkpoint_path, "a") as cp_f:
+                            cp_f.write(f"{returned_relative_path}\\n")
+                        logging.debug(f"LLM Checkpointed successful dir: {returned_relative_path}")
+                    except Exception as cp_e:
+                        logging.error(f"Failed to checkpoint successful LLM dir {returned_relative_path}: {cp_e}")
+                else: # Partial success or full failure of batches within the directory
+                    pass_dirs_failed += 1
+                    logging.warning(
+                        f"LLM Dir {returned_relative_path} had {successful_batches_in_dir}/{total_batches_in_dir} successful batches. Not fully checkpointed."
                     )
-
-            except Exception as exc:
-                # How to get rel_path if future itself failed hard?
+            except concurrent.futures.process.BrokenProcessPool as bpp_exc:
+                pass_dirs_failed +=1 # The directory processing failed
+                logging.error(f"An LLM directory worker process died (BrokenProcessPool): {bpp_exc}", exc_info=True)
+            except Exception as e:
+                pass_dirs_failed += 1 # The directory processing failed
                 logging.error(
-                    f"A video directory LLM task failed: {exc}", exc_info=True
+                    f"Error processing an LLM directory future: {e}", exc_info=True
                 )
+    return pass_dirs_attempted, pass_dirs_successful, pass_dirs_failed, pass_total_cost, pass_total_frames_processed
 
-    overall_duration = time.time() - overall_start_time
-    logging.info(f"--- LLM Pipeline Finished --- For This Run ---")
-    logging.info(f"Total Video Dirs Targeted: {target_dir_count}")
-    logging.info(
-        f"Total Video Dirs Processed (attempted): {total_processed_dirs_this_run}"
-    )
-    logging.info(
-        f"Total Video Dirs Fully Successful: {total_successful_dirs_this_run}"
-    )
-    logging.info(
-        f"Grand Total Estimated Cost This Run: ${grand_total_cost_this_run:.4f}"
-    )
-    logging.info(
-        f"Total LLM pipeline processing time: {overall_duration:.2f} seconds."
-    )
-    logging.info(
-        f"See {checkpoint_path} for successfully LLM-processed video directories."
-    )
+
+def run_llm_pipeline(
+    input_dir: str = "./extracted_frames",
+    output_dir: str = "./llm_output",
+    batch_size: int = 60,
+    max_workers_dirs: int | None = 2,  # Max parallel video directories
+    max_workers_batches_per_dir: int | None = 2,  # Max parallel batches within one dir
+    start_index: int | None = None,
+    end_index: int | None = None,
+    prompt_path: str = str(DEFAULT_PROMPT_PATH),
+    model_name: str = DEFAULT_MODEL_NAME,
+    checkpoint_file_name: str = ".processed_llm_video_dirs.log",
+    daemon_mode: bool = False,
+    watch_interval_seconds: int = 300,
+):
+    """
+    Main function to run the LLM processing pipeline.
+    Can run once or in daemon mode to continuously monitor for new directories.
+    """
+    from rich import print # Local import for this main orchestrator
+
+    print("--- Starting LLM Processing Pipeline --- ")
+    try:
+        prompt_text = load_prompt(Path(prompt_path))
+        if not prompt_text:
+            print(f"[red]Error: Prompt file '{prompt_path}' is empty or could not be read.[/red]")
+            return
+        print(f"[green]Prompt loaded successfully from: {prompt_path}[/green]")
+    except FileNotFoundError:
+        print(f"[red]Error: Prompt file not found at '{prompt_path}'[/red]")
+        return
+    except Exception as e:
+        print(f"[red]An unexpected error occurred while loading prompt: {e}[/red]")
+        return
+
+    input_root = Path(input_dir).resolve()
+    output_root = Path(output_dir).resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    logging.info(f"Input Frames Directory (for LLM): {input_root}")
+    logging.info(f"Output LLM JSON Directory: {output_root}")
+    checkpoint_full_path = output_root / checkpoint_file_name
+    logging.info(f"LLM Checkpoint file path: {str(checkpoint_full_path)}")
+    logging.info(f"LLM Model: {model_name}")
+    logging.info(f"Batch Size per LLM call: {batch_size} frames")
+    logging.info(f"Max Workers (Dirs): {max_workers_dirs if max_workers_dirs else 'Sequential'}")
+    logging.info(f"Max Workers (Batches/Dir): {max_workers_batches_per_dir if max_workers_batches_per_dir else 'Sequential'}")
+
+    if daemon_mode:
+        logging.info(
+            f"[DAEMON MODE] LLM Pipeline activated. Watch interval: {watch_interval_seconds}s. "
+            f"Initial slice: start={start_index}, end={end_index}. Subsequent passes process all new."
+        )
+    else:
+        logging.info(f"Single run mode for LLM Pipeline. Slice: start={start_index}, end={end_index}")
+
+    run_iteration = 0
+    overall_dirs_attempted = 0
+    overall_dirs_successful = 0
+    overall_dirs_failed = 0
+    overall_total_cost = 0.0
+    overall_total_frames_processed = 0
+    
+    first_pass_daemon = True
+    pipeline_start_time = time.time()
+
+    try:
+        while True:
+            run_iteration += 1
+            logging.info(f"--- Starting LLM Processing Pass #{run_iteration} ---")
+            pass_start_time = time.time()
+
+            current_start_idx_for_pass = None
+            current_end_idx_for_pass = None
+
+            if daemon_mode:
+                if first_pass_daemon:
+                    current_start_idx_for_pass = start_index
+                    current_end_idx_for_pass = end_index
+                    first_pass_daemon = False
+                else:
+                    current_start_idx_for_pass = 0 # Process all new
+                    current_end_idx_for_pass = None
+            else: # Single run
+                current_start_idx_for_pass = start_index
+                current_end_idx_for_pass = end_index
+            
+            pass_attempted, pass_successful, pass_failed, pass_cost, pass_frames = _perform_llm_processing_pass(
+                input_root=input_root,
+                output_root=output_root,
+                prompt_text=prompt_text,
+                batch_size=batch_size,
+                model_name=model_name,
+                max_workers_dirs=max_workers_dirs,
+                max_workers_batches_per_dir=max_workers_batches_per_dir,
+                effective_start_index=current_start_idx_for_pass,
+                effective_end_index=current_end_idx_for_pass,
+                checkpoint_file_name=checkpoint_file_name,
+            )
+            
+            pass_duration = time.time() - pass_start_time
+
+            logging.info(f"--- LLM Pass #{run_iteration} Summary ---")
+            logging.info(f"Input Dirs targeted in this pass: {pass_attempted}")
+            logging.info(f"Successfully processed (dirs) in this pass: {pass_successful}")
+            logging.info(f"Failed (dirs) in this pass: {pass_failed}")
+            logging.info(f"Estimated cost for this pass: ${pass_cost:.4f}")
+            logging.info(f"Frames processed in this pass: {pass_frames}")
+            logging.info(f"LLM Pass #{run_iteration} duration: {pass_duration:.2f} seconds")
+
+            overall_dirs_attempted += pass_attempted
+            overall_dirs_successful += pass_successful
+            overall_dirs_failed += pass_failed
+            overall_total_cost += pass_cost
+            overall_total_frames_processed += pass_frames
+            
+            if not daemon_mode:
+                break
+
+            logging.info(f"[DAEMON MODE] Next LLM scan in {watch_interval_seconds} seconds. (Ctrl+C to stop)")
+            time.sleep(watch_interval_seconds)
+            
+    except KeyboardInterrupt:
+        print("[bold red]LLM Pipeline KeyboardInterrupt. Shutting down gracefully...[/bold red]")
+    finally:
+        pipeline_duration = time.time() - pipeline_start_time
+        print("--- Overall LLM Processing Summary ---")
+        if daemon_mode:
+            print(f"Total LLM passes executed: {run_iteration}")
+        print(f"Total Input Directories Targeted: {overall_dirs_attempted}")
+        print(f"Total Successfully Processed Dirs: {overall_dirs_successful}")
+        print(f"Total Failed Dirs: {overall_dirs_failed}")
+        print(f"Total Estimated Cost: ${overall_total_cost:.4f}")
+        print(f"Total Frames Processed (across all targeted batches): {overall_total_frames_processed}")
+        print(f"Total LLM Pipeline Duration: {pipeline_duration:.2f} seconds")
+        print(f"See {checkpoint_full_path} for completed LLM input directories.")
 
 
 class LLMPipelineCLI:
+    """CLI for the LLM Processing Pipeline."""
+
     def run(
         self,
         input_dir: str = "./extracted_frames",
         output_dir: str = "./llm_output",
         batch_size: int = 60,
-        max_workers_dirs: int | None = 8,
-        max_workers_batches_per_dir: int | None = 8,
+        max_workers_dirs: int | None = 8, # Default based on common machine capabilities
+        max_workers_batches_per_dir: int | None = 8, # Default based on common machine capabilities
         start_index: int | None = None,
         end_index: int | None = None,
         prompt_path: str = str(DEFAULT_PROMPT_PATH),
-        model_name: str = DEFAULT_MODEL_NAME,
+        model_name: str = str(DEFAULT_MODEL_NAME), # Ensure str for fire
         checkpoint_log: str = ".processed_llm_video_dirs.log",
+        daemon_mode: bool = False,
+        watch_interval_seconds: int = 300,
     ):
+        """
+        Runs the LLM processing pipeline on extracted frame directories.
+
+        Args:
+            input_dir: Root directory containing subdirectories of extracted frames.
+            output_dir: Root directory to save the LLM JSON outputs.
+            batch_size: Number of frames to process in a single LLM call.
+            max_workers_dirs: Max number of video directories to process in parallel.
+            max_workers_batches_per_dir: Max number of frame batches to process in parallel within a single video directory.
+            start_index: 0-based index of the first video directory to process (after checkpointing).
+                         Applies to single run or the first pass of daemon mode.
+            end_index: 0-based index *after* the last video directory to process (after checkpointing).
+                       Applies to single run or the first pass of daemon mode.
+            prompt_path: Path to the LLM prompt file.
+            model_name: Name of the Gemini model to use.
+            checkpoint_log: Name for the checkpoint log file in output_dir for processed video directories.
+            daemon_mode: If True, run continuously, scanning for new directories at intervals.
+            watch_interval_seconds: Interval in seconds for daemon mode scans.
+        """
+        # Simple validation for worker counts to avoid issues with ProcessPoolExecutor
+        if max_workers_dirs is not None and max_workers_dirs < 1:
+            logging.warning("max_workers_dirs cannot be less than 1. Setting to 1.")
+            max_workers_dirs = 1
+        if max_workers_batches_per_dir is not None and max_workers_batches_per_dir < 1:
+            logging.warning("max_workers_batches_per_dir cannot be less than 1. Setting to 1.")
+            max_workers_batches_per_dir = 1
+
         run_llm_pipeline(
             input_dir=input_dir,
             output_dir=output_dir,
@@ -575,9 +713,10 @@ class LLMPipelineCLI:
             end_index=end_index,
             prompt_path=prompt_path,
             model_name=model_name,
-            checkpoint_file_name=checkpoint_log,
+            checkpoint_file_name=checkpoint_log, # Pass CLI's checkpoint_log as checkpoint_file_name
+            daemon_mode=daemon_mode,
+            watch_interval_seconds=watch_interval_seconds,
         )
-
 
 if __name__ == "__main__":
     fire.Fire(LLMPipelineCLI)

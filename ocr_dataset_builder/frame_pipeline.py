@@ -71,12 +71,15 @@ def _process_single_video_dir(
     """Helper function to process a single video directory."""
     # dir_name = video_dir_absolute_path.name # Use relative_path for external reporting
     metadata_copied = False
+    logging.debug(f"Worker: Entering _process_single_video_dir for {video_dir_relative_path}")
     try:
+        logging.debug(f"Worker: Attempting to find video file in {video_dir_absolute_path}")
         video_file = find_video_file(video_dir_absolute_path)
+        logging.debug(f"Worker: Attempting to find metadata file in {video_dir_absolute_path}")
         metadata_file = find_metadata_file(video_dir_absolute_path)
 
         if not video_file:
-            # Return relative path for consistency in reporting
+            logging.warning(f"Worker: No video file found for {video_dir_relative_path}")
             return (video_dir_relative_path, None, "No video file found")
 
         # Determine mirrored output directory path using absolute input_root and relative_path
@@ -84,29 +87,33 @@ def _process_single_video_dir(
         output_video_frames_dir = (
             output_root / video_dir_relative_path
         )  # Simpler now
+        logging.debug(f"Worker: Output directory for frames: {output_video_frames_dir}")
         # extract_frames will create this directory
 
         if metadata_file:
             try:
+                logging.debug(f"Worker: Creating output directory (if not exists): {output_video_frames_dir}")
                 output_video_frames_dir.mkdir(parents=True, exist_ok=True)
                 target_metadata_path = (
                     output_video_frames_dir / metadata_file.name
                 )
+                logging.debug(f"Worker: Copying metadata {metadata_file.name} to {target_metadata_path}")
                 shutil.copy2(metadata_file, target_metadata_path)
                 metadata_copied = True
                 logging.debug(  # Reduced log level for less noise
-                    f"  Copied metadata {metadata_file.name} to {output_video_frames_dir.name}"
+                    f"Worker: Copied metadata {metadata_file.name} for {video_dir_relative_path}"
                 )
             except Exception as meta_e:
                 logging.error(
-                    f"  Failed to copy metadata {metadata_file.name} "
-                    f"for {video_dir_relative_path}: {meta_e}"
+                    f"Worker: Failed to copy metadata {metadata_file.name} "
+                    f"for {video_dir_relative_path}: {meta_e}", exc_info=True
                 )
         else:
             logging.warning(
                 f"  No .info.json metadata file found for {video_dir_relative_path}"
             )
 
+        logging.info(f"Worker: Starting frame extraction for {video_file.name} (Dir: {video_dir_relative_path})")
         extracted_paths = extract_frames(
             str(video_file),
             str(output_video_frames_dir),
@@ -114,6 +121,7 @@ def _process_single_video_dir(
             max_dimension=max_dimension,
             max_frames_per_video=max_frames_per_video,
         )
+        logging.info(f"Worker: Finished frame extraction for {video_file.name}, {len(extracted_paths) if extracted_paths else 0} frames. (Dir: {video_dir_relative_path})")
 
         status_suffix = (
             " (Metadata OK)"
@@ -135,96 +143,70 @@ def _process_single_video_dir(
 
     except Exception as e:
         logging.error(
-            f"Error in worker for {video_dir_relative_path}: {e}",
-            exc_info=False,
+            f"Worker: Unhandled error in _process_single_video_dir for {video_dir_relative_path}: {e}",
+            exc_info=True,  # Log full traceback
         )
         # Return relative path for consistency
         return (video_dir_relative_path, None, f"Error: {e}")
 
 
-def process_dataset_videos(
-    input_root_dir: str | Path,
-    output_root_dir: str | Path,
-    target_fps: int = 1,
-    max_dimension: int | None = 1024,
-    max_frames_per_video: int | None = None,
-    start_index: int | None = None,
-    end_index: int | None = None,
-    max_workers: int | None = None,
-    checkpoint_file_name: str = ".processed_video_dirs.log",
-    dry_run: bool = False,
-):
+def _perform_processing_pass(
+    input_root: Path,
+    output_root: Path,
+    target_fps: int,
+    max_dimension: int | None,
+    max_frames_per_video: int | None,
+    effective_start_index: int | None,
+    effective_end_index: int | None,
+    max_workers: int | None,
+    checkpoint_file_name: str,
+    dry_run: bool,
+) -> tuple[int, int, int, int, int]: # attempted_this_pass, successful_this_pass, failed_this_pass, no_video_this_pass, total_frames_this_pass
     """
-    Processes a slice of video directories concurrently, with checkpointing.
-    New directories added to input_root_dir will be considered for processing.
-    Previously successfully processed directories are skipped.
-
-    Args:
-        input_root_dir: Root directory containing video subdirectories.
-        output_root_dir: Root directory for saving extracted frames & checkpoints.
-        target_fps: Target frames per second for extraction.
-        max_dimension: Max dimension (width or height) for frame resizing.
-        max_frames_per_video: Max frames to randomly sample per video.
-        start_index: 0-based index of the first video directory *to consider processing*
-                     (after accounting for checkpoints). Defaults to 0.
-        end_index: 0-based index after the last directory *to consider processing*.
-                   Defaults to processing all (after accounting for checkpoints).
-        max_workers: Max number of processes. Defaults to os.cpu_count().
-        checkpoint_file_name: Name of the file to store/load processed directory paths.
-                              Stored in output_root_dir.
-        dry_run: If True, simulate the run, log actions, but do not process videos.
+    Performs a single pass of discovering and processing videos.
+    Returns statistics for the pass.
     """
-    input_root = Path(input_root_dir).resolve()
-    output_root = Path(output_root_dir).resolve()
-    output_root.mkdir(parents=True, exist_ok=True)  # Ensure output root exists
-
-    if not input_root.is_dir():
-        logging.error(f"Input dataset directory not found: {input_root}")
-        return
-
-    logging.info(f"Starting video processing from: {input_root}")
-    logging.info(f"Outputting frames to: {output_root}")
-    logging.info(f"Checkpoint file: {output_root / checkpoint_file_name}")
-    logging.info(f"Target FPS: {target_fps}")  # Log target FPS
-    if max_dimension and max_dimension > 0:
-        logging.info(f"Max frame dimension: {max_dimension}px")
-    else:
-        logging.info("Frame resizing disabled.")
-    if max_frames_per_video and max_frames_per_video > 0:
-        logging.info(
-            f"Max frames per video (sampling): {max_frames_per_video}"
-        )
-    else:
-        logging.info("Frame sampling disabled.")
-
-    if dry_run:
-        logging.info("[bold yellow]*** DRY RUN ACTIVATED ***[/bold yellow] No actual video processing will occur.")
-        # Optionally, force debug logging in dry_run mode if not already set
-        # current_log_level = logging.getLogger().getEffectiveLevel()
-        # if current_log_level > logging.DEBUG:
-        #     logging.getLogger().setLevel(logging.DEBUG)
-        #     logging.debug("[DRY RUN] Temporarily set log level to DEBUG for detailed dry run output.")
-
-    # --- Checkpoint Loading ---
     checkpoint_path = output_root / checkpoint_file_name
     processed_dirs_from_checkpoint = set()
+    malformed_checkpoint_entries = 0
+    max_path_len_checkpoint = 1024 # Arbitrary reasonable limit
+
     if checkpoint_path.is_file():
         try:
             with open(checkpoint_path, "r") as f:
-                for line in f:
-                    processed_dirs_from_checkpoint.add(line.strip())
+                for line_num, line in enumerate(f):
+                    path_str = line.strip()
+                    # Add check for malformed/long lines
+                    if not path_str: # Skip empty lines
+                        continue
+                    if '\\n' in path_str or '\r' in path_str: # Check for embedded newlines
+                        logging.warning(
+                            f"Skipping malformed entry in Frame checkpoint {checkpoint_path} (line ~{line_num+1}): Contains newline chars."
+                        )
+                        malformed_checkpoint_entries += 1
+                        continue
+                    if len(path_str) > max_path_len_checkpoint:
+                        logging.warning(
+                            f"Skipping malformed entry in Frame checkpoint {checkpoint_path} (line ~{line_num+1}): Exceeds max length {max_path_len_checkpoint}. Entry: \"{path_str[:80]}...\""
+                        )
+                        malformed_checkpoint_entries += 1
+                        continue
+                    
+                    processed_dirs_from_checkpoint.add(path_str)
+            
             logging.info(
-                f"Loaded {len(processed_dirs_from_checkpoint)} processed directory paths from checkpoint."
+                f"Loaded {len(processed_dirs_from_checkpoint)} valid processed directory paths from Frame checkpoint."
             )
-            if dry_run:
-                logging.debug(f"[DRY RUN] Checkpoint content: {processed_dirs_from_checkpoint}")
+            if malformed_checkpoint_entries > 0:
+                 logging.warning(f"Skipped {malformed_checkpoint_entries} potentially malformed entries during Frame checkpoint load.")
+
         except Exception as e:
             logging.error(
-                f"Could not read checkpoint file {checkpoint_path}: {e}. Processing all (or as per slice)."
+                f"Could not read Frame checkpoint file {checkpoint_path}: {e}. Processing all (or as per slice)."
             )
-            processed_dirs_from_checkpoint.clear()  # Ensure it's empty on error
+            processed_dirs_from_checkpoint.clear()
+            malformed_checkpoint_entries = 0 # Reset counter
 
-    # --- Re-indexing and Filtering ---
     all_potential_dirs_absolute = sorted(
         [d for d in input_root.iterdir() if d.is_dir()]
     )
@@ -241,12 +223,10 @@ def process_dataset_videos(
         f"Found {len(all_potential_dirs_relative)} total potential video directories in input."
     )
 
-    # Filter out dirs from checkpoint that no longer exist in input
-    # (though with relative paths, this mostly handles if checkpoint has stale entries for deleted source dirs)
     valid_processed_relative_paths = {
         path_str
         for path_str in processed_dirs_from_checkpoint
-        if (input_root / path_str).is_dir()  # Check existence using full path
+        if (input_root / path_str).is_dir()
     }
     if len(valid_processed_relative_paths) < len(
         processed_dirs_from_checkpoint
@@ -267,138 +247,113 @@ def process_dataset_videos(
     )
     if dry_run:
         logging.debug(f"[DRY RUN] Relative dirs to consider (after checkpoint filtering): {relative_dirs_to_consider}")
-
-    # Determine the slice based on the list of directories to consider
+    
     total_dirs_to_consider = len(relative_dirs_to_consider)
-    actual_start_index = start_index if start_index is not None else 0
+    
+    actual_start_index = effective_start_index if effective_start_index is not None else 0
     actual_end_index = (
-        end_index if end_index is not None else total_dirs_to_consider
+        effective_end_index if effective_end_index is not None else total_dirs_to_consider
     )
 
-    # Validate indices against the list to consider
-    if not (
-        0 <= actual_start_index <= total_dirs_to_consider
-    ):  # Can be equal if list is empty
+    if not (0 <= actual_start_index <= total_dirs_to_consider):
         logging.error(
-            f"Invalid start_index: {start_index}. For list of {total_dirs_to_consider} items, must be 0 <= index <= {total_dirs_to_consider}."
+            f"Invalid actual_start_index: {actual_start_index}. For list of {total_dirs_to_consider} items, must be 0 <= index <= {total_dirs_to_consider}."
         )
-        if dry_run:
-            logging.debug(f"[DRY RUN] Start index validation failed: start={actual_start_index}, total={total_dirs_to_consider}")
-        return
+        return 0, 0, 0, 0, 0
     if not (actual_start_index <= actual_end_index <= total_dirs_to_consider):
         logging.error(
-            f"Invalid end_index: {end_index}. For list of {total_dirs_to_consider} items, must be start_index <= index <= {total_dirs_to_consider}."
+            f"Invalid actual_end_index: {actual_end_index}. For list of {total_dirs_to_consider} items, must be start_index <= index <= {total_dirs_to_consider}."
         )
-        if dry_run:
-            logging.debug(f"[DRY RUN] End index validation failed: start={actual_start_index}, end={actual_end_index}, total={total_dirs_to_consider}")
-        return
+        return 0, 0, 0, 0, 0
 
-    # Get the final list of relative paths for this run's slice
     sliced_relative_dirs_for_this_run = relative_dirs_to_consider[
         actual_start_index:actual_end_index
     ]
-
-    # Convert back to absolute paths for processing, but keep relative for checkpointing
     absolute_dirs_for_this_run_map = {
         rel_path: (input_root / rel_path)
         for rel_path in sliced_relative_dirs_for_this_run
     }
-    if dry_run:
-        logging.debug(f"[DRY RUN] Sliced relative dirs for this run: {sliced_relative_dirs_for_this_run}")
-        logging.debug(f"[DRY RUN] Absolute dirs map for this run: {absolute_dirs_for_this_run_map}")
 
-    target_count = len(sliced_relative_dirs_for_this_run)
+    target_count_this_pass = len(sliced_relative_dirs_for_this_run)
 
-    if target_count == 0:
-        logging.warning(
-            "No directories selected for processing in this run (after checkpointing and slicing)."
+    if target_count_this_pass == 0:
+        logging.info(
+            "No new directories selected for processing in this pass."
         )
-        return
+        return 0, 0, 0, 0, 0
 
     logging.info(
-        f"Targeting {target_count} directories for actual processing this run "
-        f"(original slice: index {actual_start_index} to {actual_end_index -1} of remaining dirs) "
+        f"Targeting {target_count_this_pass} directories for processing this pass "
+        f"(slice: index {actual_start_index} to {actual_end_index -1} of remaining dirs) "
         f"using up to {max_workers if max_workers else os.cpu_count()} workers."
     )
 
-    processed_count = 0
-    successful_run_count = (
-        0  # Renamed from successful_count to avoid confusion
-    )
-    failed_run_count = 0  # Renamed
-    no_video_run_count = 0  # Renamed
-    total_frames_saved_this_run = 0  # Renamed
-    start_time = time.time()
+    pass_attempted_count = target_count_this_pass
+    pass_successful_run_count = 0
+    pass_failed_run_count = 0
+    pass_no_video_run_count = 0
+    pass_total_frames_saved = 0
 
     if dry_run:
-        logging.info(f"[DRY RUN] Would attempt to process {target_count} directories:")
+        logging.info(f"[DRY RUN] Would attempt to process {target_count_this_pass} directories in this pass:")
         for i, rel_path in enumerate(sliced_relative_dirs_for_this_run):
             abs_path = absolute_dirs_for_this_run_map[rel_path]
             logging.info(f"[DRY RUN]   {i+1}. Relative: '{rel_path}', Absolute: '{abs_path}'")
-        logging.info("[DRY RUN] Skipping actual ProcessPoolExecutor and video processing.")
-        # Log summary for dry run
-        duration = time.time() - start_time
-        logging.info(f"--- Dry Run Summary ---")
-        logging.info(f"Input root: {input_root}")
-        logging.info(f"Output root: {output_root}")
-        logging.info(f"Checkpoint file: {checkpoint_path}")
-        logging.info(f"Target FPS: {target_fps}, Max Dimension: {max_dimension}, Max Frames/Video: {max_frames_per_video}")
-        logging.info(f"Max workers: {max_workers if max_workers else os.cpu_count()}")
-        logging.info(f"Original slice indices: start={start_index}, end={end_index}")
-        logging.info(f"Dirs found in input: {len(all_potential_dirs_relative)}")
-        logging.info(f"Dirs loaded from checkpoint: {len(processed_dirs_from_checkpoint)}")
-        logging.info(f"Dirs to consider after checkpoint: {total_dirs_to_consider}")
-        logging.info(f"Actual slice for this run: {actual_start_index} to {actual_end_index-1}")
-        logging.info(f"Number of directories that WOULD BE processed: {target_count}")
-        logging.info(f"Dry run setup duration: {duration:.2f} seconds")
-        return # End execution for dry run
+        logging.info("[DRY RUN] Skipping actual ProcessPoolExecutor and video processing for this pass.")
+        # For dry run, simulate that all targeted items would be "attempted" and "successful" for pass stats
+        return target_count_this_pass, target_count_this_pass, 0, 0, 0
 
-    futures = []
-    if not max_workers:  # Handle default for max_workers if None
-        max_workers = os.cpu_count()
+    future_to_rel_path = {} # Map Future objects to the relative path they process
+    current_max_workers = max_workers if max_workers else os.cpu_count()
+    if not current_max_workers or current_max_workers < 1: 
+        current_max_workers = 1 
 
     with concurrent.futures.ProcessPoolExecutor(
-        max_workers=max_workers
+        max_workers=current_max_workers
     ) as executor:
-        # Iterate over the relative paths, get absolute path from map for submission
         for rel_path in sliced_relative_dirs_for_this_run:
             abs_path = absolute_dirs_for_this_run_map[rel_path]
             future = executor.submit(
                 _process_single_video_dir,
-                abs_path,  # Absolute path for processing
-                rel_path,  # Relative path for checkpointing/reporting
+                abs_path,
+                rel_path,
                 input_root,
                 output_root,
                 target_fps,
                 max_dimension,
                 max_frames_per_video,
             )
-            futures.append(future)
+            future_to_rel_path[future] = rel_path # Store the mapping
 
         progress_bar = tqdm(
-            concurrent.futures.as_completed(futures),
-            total=target_count,
+            concurrent.futures.as_completed(future_to_rel_path.keys()), # Iterate over futures
+            total=target_count_this_pass,
             unit="dir",
-            desc="Processing Dirs",
-            ncols=100,
+            desc="Processing Dirs (Pass)",
+            ncols=100, 
         )
 
-        for future in progress_bar:
+        for completed_future in progress_bar:
+            rel_path_for_future = future_to_rel_path[completed_future] # Get path associated with this future
             try:
-                # dir_name here is the relative_path from _process_single_video_dir
                 returned_relative_path, frame_count_or_none, status = (
-                    future.result()
+                    completed_future.result() # Get result
                 )
-                processed_count += 1
+                # Sanity check: the returned path should match the input path
+                if returned_relative_path != rel_path_for_future:
+                     logging.error(f"Mismatch in returned path ('{returned_relative_path}') and expected path ('{rel_path_for_future}') for future. Check worker logic.")
+                     # Treat this as a failure for safety, don't checkpoint
+                     pass_failed_run_count += 1
+                     continue # Skip to next future
 
+                # Process result based on status from worker
                 if status.startswith("Success"):
-                    successful_run_count += 1
+                    pass_successful_run_count += 1
                     if frame_count_or_none is not None:
-                        total_frames_saved_this_run += frame_count_or_none
-                    # --- Checkpoint Saving ---
+                        pass_total_frames_saved += frame_count_or_none
                     try:
                         with open(checkpoint_path, "a") as cp_file:
-                            cp_file.write(f"{returned_relative_path}\n")
+                            cp_file.write(f"{returned_relative_path}\\n")
                         logging.debug(
                             f"Checkpointed: {returned_relative_path}"
                         )
@@ -406,42 +361,165 @@ def process_dataset_videos(
                         logging.error(
                             f"Failed to write to checkpoint file {checkpoint_path} for {returned_relative_path}: {cp_e}"
                         )
-
                 elif status == "No video file found":
-                    no_video_run_count += 1
-                else:  # Other errors from _process_single_video_dir
-                    failed_run_count += 1
+                    pass_no_video_run_count += 1
+                    # Optionally checkpoint no-video dirs if you want to permanently skip them
+                    # try:
+                    #     with open(checkpoint_path, "a") as cp_file:
+                    #         cp_file.write(f"{returned_relative_path}\\n")
+                    # except Exception as cp_e:
+                    #     logging.error(f"Failed to checkpoint no-video dir {returned_relative_path}: {cp_e}")
+                else:
+                    pass_failed_run_count += 1
                     logging.warning(
                         f"Directory {returned_relative_path} failed with status: {status}"
                     )
-
-            except Exception as exc:  # Errors from future.result() itself
-                failed_run_count += 1
-                # How to get dir_name if future failed before returning? This is tricky.
-                # For now, just log the exception. The dir won't be checkpointed.
+            except concurrent.futures.process.BrokenProcessPool:
+                # Specific handling for BrokenProcessPool
+                pass_failed_run_count += 1
                 logging.error(
-                    f"A task in the executor failed: {exc}", exc_info=True
+                    f"Worker process for directory '{rel_path_for_future}' died unexpectedly (BrokenProcessPool). "
+                    f"Possible memory issue or problematic video file. Directory will not be checkpointed."
                 )
+            except Exception as exc:
+                # Handle other exceptions from future.result() or the block above
+                pass_failed_run_count += 1
+                logging.error(
+                    f"An unexpected error occurred while processing result for directory '{rel_path_for_future}': {exc}",
+                    exc_info=True
+                )
+    
+    return pass_attempted_count, pass_successful_run_count, pass_failed_run_count, pass_no_video_run_count, pass_total_frames_saved
 
-    end_time = time.time()
-    duration = end_time - start_time
-    logging.info(f"--- Processing Summary for This Run ---")
-    logging.info(f"Attempted to process: {target_count} directories")
-    logging.info(
-        f"Successfully processed & saved frames for: {successful_run_count} directories"
-    )
-    logging.info(
-        f"Skipped (no video file found): {no_video_run_count} directories"
-    )
-    logging.info(f"Failed during processing: {failed_run_count} directories")
-    logging.info(
-        f"Total frames saved in this run: {total_frames_saved_this_run}"
-    )
-    logging.info(f"Total processing time: {duration:.2f} seconds")
-    logging.info(
-        f"See {checkpoint_path} for a list of successfully completed directories."
-    )
+def process_dataset_videos(
+    input_root_dir: str | Path,
+    output_root_dir: str | Path,
+    target_fps: int = 1,
+    max_dimension: int | None = 1024,
+    max_frames_per_video: int | None = None,
+    start_index: int | None = None,
+    end_index: int | None = None,
+    max_workers: int | None = None,
+    checkpoint_file_name: str = ".processed_video_dirs.log",
+    dry_run: bool = False,
+    daemon_mode: bool = False,
+    watch_interval_seconds: int = 300,
+):
+    """
+    Processes video directories. Can run once or in daemon mode to continuously monitor.
+    """
+    input_root = Path(input_root_dir).resolve()
+    output_root = Path(output_root_dir).resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
 
+    if not input_root.is_dir():
+        logging.error(f"Input dataset directory not found: {input_root}")
+        return
+
+    logging.info(f"Starting video processing from: {input_root}")
+    logging.info(f"Outputting frames to: {output_root}")
+    logging.info(f"Checkpoint file: {output_root / checkpoint_file_name}")
+    logging.info(f"Target FPS: {target_fps}")
+    if max_dimension and max_dimension > 0:
+        logging.info(f"Max frame dimension: {max_dimension}px")
+    else:
+        logging.info("Frame resizing disabled.")
+    if max_frames_per_video and max_frames_per_video > 0:
+        logging.info(
+            f"Max frames per video (sampling): {max_frames_per_video}"
+        )
+    else:
+        logging.info("Frame sampling disabled.")
+
+    if dry_run:
+        logging.info("[bold yellow]*** DRY RUN ACTIVATED ***[/bold yellow] No actual video processing will occur.")
+    
+    if daemon_mode:
+        logging.info(
+            f"[DAEMON MODE] Activated. Watch interval: {watch_interval_seconds}s. "
+            f"Initial slice for first pass: start_index={start_index}, end_index={end_index}. "
+            "Subsequent passes will process all new directories."
+        )
+    else:
+        logging.info(f"Single run mode. Slice to consider: start_index={start_index}, end_index={end_index}")
+
+    run_iteration = 0
+    overall_attempted_count = 0
+    overall_successful_count = 0
+    overall_failed_count = 0
+    overall_no_video_count = 0
+    overall_total_frames_saved = 0
+    
+    first_pass_daemon = True
+
+    try:
+        while True:
+            run_iteration += 1
+            logging.info(f"--- Starting Processing Pass #{run_iteration} ---")
+            pass_start_time = time.time()
+
+            current_start_idx_for_pass = None
+            current_end_idx_for_pass = None
+
+            if daemon_mode:
+                if first_pass_daemon:
+                    current_start_idx_for_pass = start_index
+                    current_end_idx_for_pass = end_index
+                    first_pass_daemon = False
+                else: # Subsequent daemon passes process all new
+                    current_start_idx_for_pass = 0
+                    current_end_idx_for_pass = None # Process all available
+            else: # Single run mode
+                current_start_idx_for_pass = start_index
+                current_end_idx_for_pass = end_index
+            
+            pass_attempted, pass_successful, pass_failed, pass_no_video, pass_frames = _perform_processing_pass(
+                input_root=input_root,
+                output_root=output_root,
+                target_fps=target_fps,
+                max_dimension=max_dimension,
+                max_frames_per_video=max_frames_per_video,
+                effective_start_index=current_start_idx_for_pass,
+                effective_end_index=current_end_idx_for_pass,
+                max_workers=max_workers,
+                checkpoint_file_name=checkpoint_file_name,
+                dry_run=dry_run,
+            )
+            
+            pass_duration = time.time() - pass_start_time
+
+            logging.info(f"--- Pass #{run_iteration} Summary ---")
+            logging.info(f"Directories targeted in this pass: {pass_attempted}")
+            logging.info(f"Successfully processed in this pass: {pass_successful}")
+            logging.info(f"Skipped (no video) in this pass: {pass_no_video}")
+            logging.info(f"Failed in this pass: {pass_failed}")
+            logging.info(f"Frames saved in this pass: {pass_frames}")
+            logging.info(f"Pass #{run_iteration} duration: {pass_duration:.2f} seconds")
+
+            overall_attempted_count += pass_attempted # This is more like "targeted"
+            overall_successful_count += pass_successful
+            overall_failed_count += pass_failed
+            overall_no_video_count += pass_no_video
+            overall_total_frames_saved += pass_frames
+            
+            if not daemon_mode:
+                break 
+
+            logging.info(f"[DAEMON MODE] Next scan in {watch_interval_seconds} seconds. (Ctrl+C to stop)")
+            time.sleep(watch_interval_seconds)
+            
+    except KeyboardInterrupt:
+        logging.info("[bold red]KeyboardInterrupt received. Shutting down gracefully...[/bold red]")
+    finally:
+        logging.info("--- Overall Summary ---")
+        if daemon_mode:
+            logging.info(f"Total passes executed: {run_iteration}")
+        logging.info(f"Total directories targeted across all passes: {overall_attempted_count}")
+        logging.info(f"Total successfully processed: {overall_successful_count}")
+        logging.info(f"Total skipped (no video file found): {overall_no_video_count}")
+        logging.info(f"Total failed during processing: {overall_failed_count}")
+        logging.info(f"Total frames saved: {overall_total_frames_saved}")
+        logging.info(f"See {output_root / checkpoint_file_name} for a list of successfully completed directories.")
 
 class PipelineCLI:
     """CLI for the OCR Dataset Builder Frame Extraction Pipeline."""
@@ -452,48 +530,44 @@ class PipelineCLI:
         output_path: str,
         target_fps: int = 1,
         max_dimension: int | None = 1024,
-        max_frames_per_video: int | None = None,  # Added this missing param
+        max_frames_per_video: int | None = None,
         start_index: int | None = None,
         end_index: int | None = None,
         max_workers: int | None = None,
         checkpoint_log: str = ".processed_video_dirs.log",
         dry_run: bool = False,
+        daemon_mode: bool = False,
+        watch_interval_seconds: int = 300,
     ):
         """
-        Processes videos from subdirectories in dataset_path and saves extracted frames.
+        Processes videos from subdirectories for frame extraction.
+        Can run once or in daemon mode to continuously monitor for new videos.
 
         Args:
-            dataset_path: Path to the root directory of the input dataset.
-                          Each subdirectory is expected to contain one video.
-            output_path: Path to the directory where extracted frames and copied
-                         metadata will be saved. A mirrored structure will be created.
-            target_fps (int, optional): Target frames per second for extraction.
-                                        Defaults to 1.
-            max_dimension (int | None, optional): Max dimension (width or height)
-                                                  for frame resizing. If None or 0,
-                                                  original size is kept. Defaults to 1024.
-            max_frames_per_video (int | None, optional): Maximum number of frames to
-                                                         randomly sample and save per video.
-                                                         If None, all extracted frames
-                                                         (after FPS and resizing) are saved.
-                                                         Defaults to None.
-            start_index (int | None, optional): 0-based index of the first video
-                                                directory to process from the list of
-                                                pending directories (after checkpointing).
-                                                Defaults to 0.
-            end_index (int | None, optional): 0-based index *after* the last video
-                                              directory to process from the list of
-                                              pending directories. Defaults to processing all.
-            max_workers (int | None, optional): Maximum number of parallel processes
-                                                to use. Defaults to the number of CPU cores.
-            checkpoint_log (str, optional): Name for the checkpoint log file.
-                                            Stored in the output_path.
-                                            Defaults to '.processed_video_dirs.log'.
-            dry_run (bool, optional): If True, simulates the run, logs actions,
-                                      but does not actually process video files.
-                                      Defaults to False.
+            dataset_path: Root directory of the input video dataset.
+            output_path: Root directory for saving extracted frames.
+            target_fps: Target frames per second for extraction. Defaults to 1.
+            max_dimension: Max dimension (px) for frame resizing. Defaults to 1024.
+                           Set to 0 or None to disable resizing.
+            max_frames_per_video: Max frames to randomly sample per video.
+                                  Defaults to None (all frames).
+            start_index: 0-based index of the first video directory to process
+                         (after checkpointing). Applies to single run or
+                         the first pass of daemon mode. Defaults to 0.
+            end_index: 0-based index *after* the last directory to process.
+                       Applies to single run or the first pass of daemon mode.
+                       Defaults to processing all available.
+            max_workers: Max number of parallel processes. Defaults to CPU count.
+            checkpoint_log: Name for the checkpoint file. Defaults to
+                            '.processed_video_dirs.log'.
+            dry_run: Simulate run, log actions, but do not process videos.
+                     Defaults to False.
+            daemon_mode: If True, run continuously, scanning for new videos
+                         at specified intervals. Defaults to False.
+            watch_interval_seconds: Interval in seconds to wait between scans
+                                    in daemon mode. Defaults to 300 (5 minutes).
         """
-        if max_dimension == 0:  # Allow 0 to mean None for convenience from CLI
+        if max_dimension == 0:
             max_dimension = None
 
         process_dataset_videos(
@@ -507,6 +581,8 @@ class PipelineCLI:
             max_workers=max_workers,
             checkpoint_file_name=checkpoint_log,
             dry_run=dry_run,
+            daemon_mode=daemon_mode,
+            watch_interval_seconds=watch_interval_seconds,
         )
 
 

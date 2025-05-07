@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import shutil # For dummy data creation
+import random # Added for selecting augmentation function
 
 import torch
 from torch.utils.data import Dataset
@@ -10,6 +11,23 @@ from PIL import Image
 from torchvision import transforms # For example transform
 
 from rich.logging import RichHandler
+
+# Import the new augmentation functions
+from ocr_dataset_builder.ocr_augmentations import (
+    setting_slight_stutter,
+    setting_gappy_and_fragmented,
+    setting_overly_eager_diff,
+    setting_line_boundary_chaos,
+    setting_classic_bad_ocr,
+    setting_the_echo_chamber,
+    setting_telegraphic_transmission,
+    setting_jittery_frame_capture,
+    setting_minimalist_diff_max_omission,
+    setting_comprehensive_degradation
+)
+
+# Import the new cleaning function
+from ocr_dataset_builder.ocr_utils import clean_tesseract_ocr
 
 # Configure basic logging with RichHandler
 logging.basicConfig(
@@ -39,7 +57,7 @@ class OcrMultimodalDataset(Dataset):
 
     2.  `llm_outputs_root_dir/` (LLM JSON outputs)
         ├── VIDEO_ID_1/
-        │   ├── llm_output_batch_0001.json
+        │   ├── llm_output_batch_*.json
         │   └── ...
         └── VIDEO_ID_2/
             └── ...
@@ -97,7 +115,8 @@ class OcrMultimodalDataset(Dataset):
             "task4_markdown",
             "task5_summary", # This is the narrative, special handling
         ],
-        alternate_task2_key: str = "task2_augmented_imperfections"
+        alternate_task2_key: str = "task2_augmented_imperfections",
+        custom_augmentation_funcs: Optional[List[Callable[[str], str]]] = None # New parameter for custom augmentations
     ):
         """
         Initializes the OcrMultimodalDataset.
@@ -122,6 +141,9 @@ class OcrMultimodalDataset(Dataset):
             alternate_task2_key (str, optional): An alternate key to check for 'task2' data if the primary
                 key (e.g., "task2_augmented") is not found in an LLM batch file.
                 Defaults to "task2_augmented_imperfections".
+            custom_augmentation_funcs (Optional[List[Callable[[str], str]]], optional): A list of functions
+                that take a string (clean OCR) and return an augmented string. If provided, one function
+                will be randomly applied to the 'task3_cleaned' output. Defaults to None.
         """
         self.frames_root_dir = Path(frames_root_dir)
         self.llm_outputs_root_dir = Path(llm_outputs_root_dir)
@@ -130,6 +152,7 @@ class OcrMultimodalDataset(Dataset):
         self.image_transform = image_transform
         self.task_keys = task_keys
         self.alternate_task2_key = alternate_task2_key
+        self.custom_augmentation_funcs = custom_augmentation_funcs # Store the custom augmentation functions
 
         self.samples = []  # Will store (frame_path, video_id, frame_stem, frame_idx_in_video)
         self.llm_data_for_video: Dict[str, Dict[str, List[str]]] = {}
@@ -471,18 +494,17 @@ class OcrMultimodalDataset(Dataset):
         """
         Retrieves a single data sample corresponding to the given index.
 
-        Each sample is a dictionary containing the frame image (or path), reconstructed LLM task outputs,
-        the narrative summary for that frame's batch, and Tesseract OCR text.
-        The `F:i-1` notation in LLM tasks is resolved on-the-fly.
+        Each sample is a dictionary containing the frame image (or path), 
+        tesseract_ocr, llm_clean_ocr, augmented_llm_clean_ocr, markdown, and summary.
+        The `F:i-1` notation in LLM tasks is resolved on-the-fly from the source files.
 
         Args:
             idx (int): The index of the sample to retrieve.
 
         Returns:
             Dict[str, Any]: A dictionary representing the multimodal data sample.
-                Keys include 'frame_path', 'image', 'task1_raw_ocr', 'task2_augmented',
-                'task3_cleaned', 'task4_markdown', 'task5_summary', 'tesseract_ocr',
-                'metadata_filepath', 'subtitle_filepaths'.
+                Keys include 'frame_path', 'image', 'tesseract_ocr', 'llm_clean_ocr',
+                'augmented_llm_clean_ocr', 'markdown', 'summary', 'metadata_filepath', 'subtitle_filepaths'.
 
         Raises:
             IndexError: If the idx is out of bounds.
@@ -493,77 +515,114 @@ class OcrMultimodalDataset(Dataset):
         frame_path, video_id, frame_stem, frame_idx_in_video = self.samples[idx]
 
         try:
-            image = Image.open(frame_path).convert("RGB")
-            if self.image_transform:
-                image = self.image_transform(image)
+            pil_image = Image.open(frame_path).convert("RGB")
+            image_tensor = self.image_transform(pil_image) if self.image_transform else pil_image
         except Exception as e:
-            logging.error(f"Error loading image {frame_path}: {e}. Returning empty tensor.")
-            image = torch.empty(0) # Or handle more gracefully
+            logging.error(f"Error loading image {frame_path}: {e}. Returning empty tensor or placeholder.")
+            # Depending on strictness, could return None or a placeholder tensor
+            image_tensor = torch.empty(0) # Placeholder
 
-        item: Dict[str, Any] = {"frame_path": str(frame_path), "image": image}
+        # Initialize the dictionary for the final selected data
+        final_item: Dict[str, Any] = {
+            "frame_path": str(frame_path),
+            "video_id": video_id,
+            "frame_stem": frame_stem,
+            "image": image_tensor,
+            "tesseract_ocr": "",
+            "llm_clean_ocr": "",
+            "augmented_llm_clean_ocr": "",
+            "markdown": "",
+            "summary": "",
+        }
 
-        # LLM data reconstruction
-        # Cache for F:i-1 reconstruction, specific to this __getitem__ call and video
+        # --- Load ALL relevant data from source files first ---
+        # This part remains similar, loading based on self.task_keys from the JSON structure
+        raw_loaded_llm_tasks: Dict[str, str] = {}
         llm_reconstruction_cache_for_item: Dict[str, Dict[int, str]] = {task: {} for task in self.task_keys if task != "task5_summary"}
-
         video_llm_data = self.llm_data_for_video.get(video_id, {})
-        
-        for task_key_template in self.task_keys:
-            if task_key_template == "task5_summary":
-                # task5_summary is handled via the "task5_summary_list" which is already per-frame
-                item[task_key_template] = video_llm_data.get("task5_summary_list", [])[frame_idx_in_video] if frame_idx_in_video < len(video_llm_data.get("task5_summary_list", [])) else ""
 
-            elif task_key_template == "task2_augmented": # Handle alternate key name
+        for task_key_template in self.task_keys: # self.task_keys are from old 5-task prompt for now
+            if task_key_template == "task5_summary":
+                raw_loaded_llm_tasks[task_key_template] = video_llm_data.get("task5_summary_list", [])[frame_idx_in_video] if frame_idx_in_video < len(video_llm_data.get("task5_summary_list", [])) else ""
+            elif task_key_template == "task2_augmented":
                 task_data_list_aug = video_llm_data.get("task2_augmented", [])
                 task_data_list_alt = video_llm_data.get(self.alternate_task2_key, [])
-                
-                # Prefer 'task2_augmented', use alternate if primary is empty or not present for this frame
-                # This logic assumes one of them should have the data if the key exists for the video
                 chosen_task_list = []
                 if frame_idx_in_video < len(task_data_list_aug) and task_data_list_aug[frame_idx_in_video]:
                     chosen_task_list = task_data_list_aug
                 elif frame_idx_in_video < len(task_data_list_alt) and task_data_list_alt[frame_idx_in_video]:
                      chosen_task_list = task_data_list_alt
-                elif frame_idx_in_video < len(task_data_list_aug): # fallback to primary even if empty, to allow reconstruction
+                elif frame_idx_in_video < len(task_data_list_aug):
                     chosen_task_list = task_data_list_aug
-                else: # fallback to alternate even if empty
+                else:
                     chosen_task_list = task_data_list_alt
-
                 if frame_idx_in_video < len(chosen_task_list):
-                    item[task_key_template] = self._reconstruct_llm_output(
-                        chosen_task_list,
-                        frame_idx_in_video,
-                        llm_reconstruction_cache_for_item[task_key_template],
+                    raw_loaded_llm_tasks[task_key_template] = self._reconstruct_llm_output(
+                        chosen_task_list, frame_idx_in_video, llm_reconstruction_cache_for_item[task_key_template]
                     )
                 else:
-                    item[task_key_template] = "" # Data missing for this frame
+                    raw_loaded_llm_tasks[task_key_template] = ""
             else:
                 task_data_list = video_llm_data.get(task_key_template, [])
                 if frame_idx_in_video < len(task_data_list):
-                    item[task_key_template] = self._reconstruct_llm_output(
-                        task_data_list,
-                        frame_idx_in_video,
-                        llm_reconstruction_cache_for_item[task_key_template],
+                    raw_loaded_llm_tasks[task_key_template] = self._reconstruct_llm_output(
+                        task_data_list, frame_idx_in_video, llm_reconstruction_cache_for_item.get(task_key_template, {})
                     )
                 else:
-                    item[task_key_template] = "" # Data missing for this frame
+                    raw_loaded_llm_tasks[task_key_template] = ""
+        
+        # --- Populate final_item with prioritized mapping ---
 
-        # Tesseract data
+        # 1. Tesseract OCR
         video_tesseract_data = self.tesseract_data_for_video.get(video_id, {})
-        # Tesseract keys might have .png, .jpg etc.
         tesseract_text = ""
-        for ext in ['.png', '.jpg', '.jpeg']: # Check common extensions
+        for ext in ['.png', '.jpg', '.jpeg']:
             tesseract_text = video_tesseract_data.get(frame_stem + ext, "")
-            if tesseract_text:
-                break
-        item["tesseract_ocr"] = tesseract_text
+            if tesseract_text: break
+
+        # Clean the Tesseract text using the utility function
+        cleaned_tesseract_text = clean_tesseract_ocr(tesseract_text)
+        final_item["tesseract_ocr"] = cleaned_tesseract_text
+
+        # 2. LLM Clean OCR (Source for our augmentation)
+        #    Priority: new key "cleaned_ocr" (or similar from new prompt) -> old "task3_cleaned"
+        #    For llm_processing.py, "==== TASK 1: Cleaned OCR Text ====" might become "cleaned_ocr_text"
+        #    Let's assume a potential new key could be "task1_cleaned_ocr" if llm_pipeline keeps taskN_ prefix
+        clean_ocr_source_text = raw_loaded_llm_tasks.get("task1_cleaned_ocr", 
+                                        raw_loaded_llm_tasks.get("cleaned_ocr", 
+                                                               raw_loaded_llm_tasks.get("task3_cleaned", "")))
+        final_item["llm_clean_ocr"] = clean_ocr_source_text
+
+        # 3. Augmented LLM Clean OCR (Our Python augmentations)
+        if self.custom_augmentation_funcs and clean_ocr_source_text:
+            chosen_augmentation_func = random.choice(self.custom_augmentation_funcs)
+            final_item["augmented_llm_clean_ocr"] = chosen_augmentation_func(clean_ocr_source_text)
+        else:
+            final_item["augmented_llm_clean_ocr"] = "" # or clean_ocr_source_text if no augmentation desired when funcs are missing
+
+        # 4. Markdown
+        #    Priority: new key "structured_markdown" (or similar) -> old "task4_markdown"
+        #    Potential new key: "task2_structured_markdown"
+        final_item["markdown"] = raw_loaded_llm_tasks.get("task2_structured_markdown",
+                                         raw_loaded_llm_tasks.get("structured_markdown",
+                                                                raw_loaded_llm_tasks.get("task4_markdown", "")))
+
+        # 5. Summary
+        #    Priority: new key "narrative_summary" (or similar) -> old "task5_summary"
+        #    Potential new key: "task3_narrative_summary"
+        final_item["summary"] = raw_loaded_llm_tasks.get("task3_narrative_summary",
+                                       raw_loaded_llm_tasks.get("narrative_summary",
+                                                              raw_loaded_llm_tasks.get("task5_summary", "")))
         
         # Add auxiliary file paths
         aux_paths = self.auxiliary_file_paths.get(video_id, {"metadata_filepath": None, "subtitle_filepaths": []})
-        item["metadata_filepath"] = aux_paths["metadata_filepath"]
-        item["subtitle_filepaths"] = aux_paths["subtitle_filepaths"]
+        final_item["metadata_filepath"] = aux_paths["metadata_filepath"]
+        final_item["subtitle_filepaths"] = aux_paths["subtitle_filepaths"]
         
-        return item
+        # item["custom_augmented_ocr"] is now final_item["augmented_llm_clean_ocr"]
+        # The old raw_loaded_llm_tasks are not directly returned unless mapped above.
+
+        return final_item
 
 # --- Example Usage ---
 def _create_dummy_llm_batch_file(
@@ -717,16 +776,33 @@ if __name__ == "__main__":
     # These should match the keys used in your LLM output JSONs
     dataset_task_keys_for_loader = [
         "task1_raw_ocr",
-        "task2_augmented", # This is the primary key the Dataset will look for
+        "task2_augmented",
         "task3_cleaned",
         "task4_markdown",
-        "task5_summary"    # This is the narrative summary key
+        "task5_summary",
+        # Add potential new keys here if you want them to be loaded by _reconstruct_llm_output directly,
+        # though the mapping logic in __getitem__ tries to handle this flexibly.
+        # e.g., "task1_cleaned_ocr", "task2_structured_markdown", "task3_narrative_summary"
     ]
     dataset_alternate_task2_key_for_loader = "task2_augmented_imperfections"
 
     # Optional: Load only a specific subset of video IDs for faster testing
     # video_ids_to_test = ["#038 Asynchronous Programming in C# [ شرح بالعربي ]  #async #await #thread #task [kDUDX3VJFEc]"] 
     video_ids_to_test = None # Load all videos
+
+    # List of our new augmentation functions
+    all_custom_augmentations = [
+        setting_slight_stutter,
+        setting_gappy_and_fragmented,
+        setting_overly_eager_diff,
+        setting_line_boundary_chaos,
+        setting_classic_bad_ocr,
+        setting_the_echo_chamber,
+        setting_telegraphic_transmission,
+        setting_jittery_frame_capture,
+        setting_minimalist_diff_max_omission,
+        setting_comprehensive_degradation
+    ]
 
     dataset = OcrMultimodalDataset(
         frames_root_dir=frames_root,
@@ -736,6 +812,7 @@ if __name__ == "__main__":
         image_transform=simple_transform,
         task_keys=dataset_task_keys_for_loader,
         alternate_task2_key=dataset_alternate_task2_key_for_loader,
+        custom_augmentation_funcs=all_custom_augmentations,
         video_ids_to_load=video_ids_to_test
     )
 
@@ -762,9 +839,17 @@ if __name__ == "__main__":
                     sample = dataset[i]
                     logging.info(f"  Frame Path: {sample.get('frame_path', 'N/A')}")
                     logging.info(f"  Image Tensor Shape: {sample.get('image').shape if hasattr(sample.get('image'), 'shape') else 'N/A'}")
-                    for task_key in dataset_task_keys_for_loader:
-                        logging.info(f"  {task_key}: '{str(sample.get(task_key, ''))}...'")
-                    logging.info(f"  tesseract_ocr: '{str(sample.get('tesseract_ocr', ''))}...'")
+                    
+                    # Print the new desired fields
+                    logging.info(f"  Tesseract OCR (Cleaned): '{str(sample.get('tesseract_ocr', 'N/A'))[:200]}...'" )
+                    logging.info(f"  LLM Clean OCR: '{str(sample.get('llm_clean_ocr', 'N/A'))[:200]}...'" )
+                    logging.info(f"  Augmented LLM Clean OCR: '{str(sample.get('augmented_llm_clean_ocr', 'N/A'))[:200]}...'" )
+                    logging.info(f"  Markdown: '{str(sample.get('markdown', 'N/A'))[:200]}...'" )
+                    logging.info(f"  Summary: '{str(sample.get('summary', 'N/A'))[:200]}...'" )
+
+                    # logging.info(f"  Raw Loaded Task1 (for debug): '{str(raw_loaded_llm_tasks.get('task1_raw_ocr', ''))[:100]}...'") 
+                    # The above line would error as raw_loaded_llm_tasks is local to __getitem__
+
                     logging.info(f"  metadata_filepath: {sample.get('metadata_filepath', 'N/A')}")
                     logging.info(f"  subtitle_filepaths: {sample.get('subtitle_filepaths', [])}")
                 except Exception as e:
