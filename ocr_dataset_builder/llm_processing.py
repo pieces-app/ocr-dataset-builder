@@ -34,6 +34,7 @@ SAFETY_SETTINGS = [
 DEFAULT_TEMPERATURE = 1.0
 DEFAULT_TOP_P = 1.0
 DEFAULT_MAX_TOKENS = 65_535  # Adjust based on expected output size
+DEFAULT_MODEL_NAME = "gemini-2.5-pro-preview-03-25" # Added default model name
 
 # --- Helper Functions ---
 
@@ -97,6 +98,7 @@ def process_image_sequence(
     client: genai.Client,
     image_paths: list[str | Path],
     prompt_text: str,
+    model_name: str = DEFAULT_MODEL_NAME, # Use default model name
     print_output: bool = False,
     print_counts: bool = False,
 ) -> tuple[str | None, int | None, int | None]:
@@ -113,7 +115,7 @@ def process_image_sequence(
     """
     if not client:
         logging.error("Vertex AI client not initialized.")
-        return None
+        return None, None, None
 
     logging.info(f"Processing sequence of {len(image_paths)} images.")
 
@@ -153,16 +155,16 @@ def process_image_sequence(
             logging.error(
                 f"Image file not found: {img_path_obj}. Skipping sequence."
             )
-            return None
+            return None, None, None
         except Exception as e:
             logging.error(
                 f"Error processing image {img_path_obj}: {e}", exc_info=True
             )
-            return None
+            return None, None, None
 
     if len(parts_list) <= 1:  # Only prompt, no images added successfully
         logging.error("No valid images loaded to create parts.")
-        return None
+        return None, None, None
 
     # Define generation config
     generation_config = types.GenerateContentConfig(
@@ -183,12 +185,12 @@ def process_image_sequence(
         # Call generate_content using the client.models attribute
         # Pass the list of parts directly as contents, following user example
         num_input_tokens = client.models.count_tokens(
-            model="gemini-2.5-pro-preview-03-25",
+            model=model_name,
             contents=parts_list,
         ).total_tokens
         text_response = ""
         for chunk in client.models.generate_content_stream(
-            model="gemini-2.5-pro-preview-03-25",
+            model=model_name,
             contents=parts_list,
             config=generation_config,
         ):
@@ -197,7 +199,7 @@ def process_image_sequence(
                 if print_output:
                     print(chunk.text, end="")
         num_output_tokens = client.models.count_tokens(
-            model="gemini-2.5-pro-preview-03-25",
+            model=model_name,
             contents=text_response,
         ).total_tokens
         if print_counts:
@@ -206,7 +208,7 @@ def process_image_sequence(
         return text_response, num_input_tokens, num_output_tokens
     except Exception as e:
         logging.error(f"Error during API call via Client: {e}", exc_info=True)
-        return None
+        return None, None, None
 
 
 def parse_llm_response(response_text: str) -> dict | None:
@@ -410,6 +412,7 @@ if __name__ == "__main__":
         gemini_vertex_client,
         sample_image_paths,
         prompt,
+        model_name=DEFAULT_MODEL_NAME, # Use default model name
         print_output=True,
         print_counts=True,
     )

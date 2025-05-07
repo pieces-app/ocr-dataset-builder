@@ -42,7 +42,7 @@ DEFAULT_PROMPT_PATH = Path(
     "ocr_dataset_builder/prompts/ocr_image_multi_task_prompt.md"
 )  # Wrapped long line
 # Read default model name from env
-DEFAULT_MODEL_NAME = os.getenv("DEFAULT_GEMINI_MODEL", "gemini-1.5-pro-latest") # Updated default
+DEFAULT_MODEL_NAME = os.getenv("DEFAULT_GEMINI_MODEL", "gemini-2.5-pro-preview-03-25") # Updated default
 
 # --- Cost Calculation Function ---
 
@@ -183,10 +183,19 @@ def _process_frame_batch(
         raw_response, input_tokens_data, output_tokens_data = None, None, None # Renamed for clarity
         if result_tuple:
             raw_response, input_tokens_data, output_tokens_data = result_tuple
+            if raw_response is None:
+                # This implies process_image_sequence failed and returned (None, X, Y)
+                # The actual API error with traceback should have been logged by process_image_sequence
+                message = f"[{batch_repr}] LLM API call failed (raw_response is None). Check preceding logs for 'Error during API call via Client' which includes the full traceback."
+                logging.error(message)
+                # Token data will be unreliable or missing
+                logging.warning(f"[{batch_repr}] Token data will be missing or unreliable due to API call failure.")
+                return status, message, None, num_frames # status is already "Error"
         else:
-            message = f"[{batch_repr}] Failed getting LLM response/tokens."
+            # This case should ideally not be hit if process_image_sequence always returns a 3-tuple.
+            message = f"[{batch_repr}] Failed to get a result tuple from process_image_sequence. This is unexpected. Check process_image_sequence implementation."
             logging.error(message)
-            return status, message, cost, num_frames
+            return status, message, cost, num_frames # status is "Error"
 
         if input_tokens_data is not None and output_tokens_data is not None:
             cost = calculate_gemini_cost(
@@ -200,7 +209,8 @@ def _process_frame_batch(
 
         parsed_data = parse_llm_response(raw_response)
         if not parsed_data:
-            message = f"[{batch_repr}] Failed parsing LLM response."
+            # If raw_response was None, parse_llm_response would log "Cannot parse empty response text."
+            message = f"[{batch_repr}] Failed parsing LLM response. This often occurs if the API call failed (see previous logs) or returned an empty/malformed response."
             logging.error(message)
             return status, message, cost, num_frames
 
