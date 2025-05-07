@@ -195,15 +195,33 @@ class OcrMultimodalDataset(Dataset):
         current_output = task_data_list[current_frame_idx_in_video]
 
         if current_output.startswith("F:"):
+            content_after_F = current_output[2:]  # Remove "F:" prefix
+            
+            ref_idx_str = ""
+            appended_content_starts_at = 0
+            for char_idx, char_val in enumerate(content_after_F):
+                if char_val.isdigit():
+                    ref_idx_str += char_val
+                    appended_content_starts_at = char_idx + 1
+                else:
+                    break  # First non-digit found, marks end of index
+
+            appended_content = content_after_F[appended_content_starts_at:]
+
+            if not ref_idx_str: # Should ideally not happen if "F:" was found and content follows
+                logging.warning(
+                    f"Could not extract numeric index from F: notation '{current_output}' for frame {current_frame_idx_in_video}. Using raw value."
+                )
+                reconstruction_cache[current_frame_idx_in_video] = current_output
+                return current_output
+            
             try:
-                parts = current_output.split(":", 1)
-                ref_idx_str = parts[1].split(" ", 1)[0] # Get index part before any appended string
                 ref_idx = int(ref_idx_str)
 
                 # Ensure the reference is not to itself or a future frame to avoid infinite loops
                 if ref_idx >= current_frame_idx_in_video :
                     logging.warning(
-                        f"Invalid frame reference F:{ref_idx} for frame {current_frame_idx_in_video}. Using raw value."
+                        f"Invalid frame reference F:{ref_idx_str} (parsed as {ref_idx}) for frame {current_frame_idx_in_video}. Reference must be to a previous frame. Using raw value '{current_output}'."
                     )
                     reconstruction_cache[current_frame_idx_in_video] = current_output
                     return current_output
@@ -213,17 +231,12 @@ class OcrMultimodalDataset(Dataset):
                     task_data_list, ref_idx, reconstruction_cache
                 )
                 
-                # Check for appended content
-                appended_content = ""
-                if " " in parts[1]:
-                    appended_content = parts[1].split(" ", 1)[1]
-                
                 final_output = reconstructed_ref_output + appended_content
                 reconstruction_cache[current_frame_idx_in_video] = final_output
                 return final_output
-            except (ValueError, IndexError) as e:
+            except ValueError: # Catches if ref_idx_str is not a valid integer after all
                 logging.warning(
-                    f"Error parsing F:i-1 notation '{current_output}' for frame {current_frame_idx_in_video}: {e}. Using raw value."
+                    f"Error converting extracted index '{ref_idx_str}' to int from F: notation '{current_output}' for frame {current_frame_idx_in_video}. Using raw value."
                 )
                 reconstruction_cache[current_frame_idx_in_video] = current_output
                 return current_output
