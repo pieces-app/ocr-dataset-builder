@@ -159,7 +159,6 @@ def _process_frame_batch(
             client=gemini_client,
             image_paths=batch_frame_paths,
             prompt_text=prompt_text,
-            model_name=model_name,  # Pass model_name
         )
 
         raw_response, input_tokens, output_tokens = None, None, None
@@ -252,9 +251,18 @@ def _process_video_directory_llm(
     successful_batches_count = 0
     dir_total_cost = 0.0
 
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=max_workers_for_batches,
-        thread_name_prefix=f"llm_batch_{frame_dir_relative_path[:10]}",
+    # Determine actual number of workers for batches if None
+    actual_max_workers_batches = max_workers_for_batches
+    if actual_max_workers_batches is None:
+        actual_max_workers_batches = os.cpu_count()
+        logging.debug(f"Defaulting max_workers_for_batches to CPU count: {actual_max_workers_batches}")
+    elif actual_max_workers_batches <= 0:
+        actual_max_workers_batches = 1 # Ensure at least one worker
+        logging.debug("max_workers_for_batches was <= 0, setting to 1.")
+
+    with concurrent.futures.ProcessPoolExecutor(
+        max_workers=actual_max_workers_batches # Use the determined value
+        # mp_context=concurrent.futures.get_context("spawn"), # Removed mp_context
     ) as batch_executor:
         for i in range(num_batches):
             start_frame_idx = i * batch_size
@@ -456,20 +464,27 @@ def run_llm_pipeline(
     total_successful_dirs_this_run = 0
     grand_total_cost_this_run = 0.0
 
-    # Executor for video directories
-    if not max_workers_dirs:
-        max_workers_dirs = os.cpu_count() if os.cpu_count() else 1
-    if not max_workers_batches_per_dir:
-        max_workers_batches_per_dir = 2  # Default if none
+    # --- Main Processing Logic ---
+    logging.info(f"Submitting {target_dir_count} video directory tasks to ProcessPoolExecutor...")
+    futures_dirs = []
 
-    dir_futures = []
+    # Determine actual number of workers for directories if None
+    actual_max_workers_dirs = max_workers_dirs
+    if actual_max_workers_dirs is None:
+        actual_max_workers_dirs = os.cpu_count()
+        logging.debug(f"Defaulting max_workers_dirs to CPU count: {actual_max_workers_dirs}")
+    elif actual_max_workers_dirs <= 0:
+        actual_max_workers_dirs = 1 # Ensure at least one worker
+        logging.debug("max_workers_dirs was <= 0, setting to 1.")
+
     with concurrent.futures.ProcessPoolExecutor(
-        max_workers=max_workers_dirs,
-        mp_context=concurrent.futures.get_context("spawn"),
-    ) as dir_executor:
+        max_workers=actual_max_workers_dirs # Use the determined value
+        # mp_context=concurrent.futures.get_context("spawn"), # Removed mp_context
+    ) as executor_dirs:
+        # Submit tasks for each directory to be processed
         for rel_path in sliced_relative_dirs_for_this_run:
             abs_path = input_root / rel_path
-            future = dir_executor.submit(
+            future = executor_dirs.submit(
                 _process_video_directory_llm,
                 abs_path,
                 rel_path,
@@ -479,10 +494,10 @@ def run_llm_pipeline(
                 model_name,
                 max_workers_batches_per_dir,
             )
-            dir_futures.append(future)
+            futures_dirs.append(future)
 
         progress_bar = tqdm(
-            concurrent.futures.as_completed(dir_futures),
+            concurrent.futures.as_completed(futures_dirs),
             total=target_dir_count,
             unit="dir",
             desc="LLM Video Dirs",
@@ -545,8 +560,8 @@ class LLMPipelineCLI:
         input_dir: str = "./extracted_frames",
         output_dir: str = "./llm_output",
         batch_size: int = 60,
-        max_workers_dirs: int | None = 2,
-        max_workers_batches_per_dir: int | None = 2,
+        max_workers_dirs: int | None = 8,
+        max_workers_batches_per_dir: int | None = 8,
         start_index: int | None = None,
         end_index: int | None = None,
         prompt_path: str = str(DEFAULT_PROMPT_PATH),

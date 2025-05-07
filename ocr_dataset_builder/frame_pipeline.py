@@ -155,6 +155,7 @@ def process_dataset_videos(
     end_index: int | None = None,
     max_workers: int | None = None,
     checkpoint_file_name: str = ".processed_video_dirs.log",
+    dry_run: bool = False,
 ):
     """
     Processes a slice of video directories concurrently, with checkpointing.
@@ -174,6 +175,7 @@ def process_dataset_videos(
         max_workers: Max number of processes. Defaults to os.cpu_count().
         checkpoint_file_name: Name of the file to store/load processed directory paths.
                               Stored in output_root_dir.
+        dry_run: If True, simulate the run, log actions, but do not process videos.
     """
     input_root = Path(input_root_dir).resolve()
     output_root = Path(output_root_dir).resolve()
@@ -198,6 +200,14 @@ def process_dataset_videos(
     else:
         logging.info("Frame sampling disabled.")
 
+    if dry_run:
+        logging.info("[bold yellow]*** DRY RUN ACTIVATED ***[/bold yellow] No actual video processing will occur.")
+        # Optionally, force debug logging in dry_run mode if not already set
+        # current_log_level = logging.getLogger().getEffectiveLevel()
+        # if current_log_level > logging.DEBUG:
+        #     logging.getLogger().setLevel(logging.DEBUG)
+        #     logging.debug("[DRY RUN] Temporarily set log level to DEBUG for detailed dry run output.")
+
     # --- Checkpoint Loading ---
     checkpoint_path = output_root / checkpoint_file_name
     processed_dirs_from_checkpoint = set()
@@ -209,6 +219,8 @@ def process_dataset_videos(
             logging.info(
                 f"Loaded {len(processed_dirs_from_checkpoint)} processed directory paths from checkpoint."
             )
+            if dry_run:
+                logging.debug(f"[DRY RUN] Checkpoint content: {processed_dirs_from_checkpoint}")
         except Exception as e:
             logging.error(
                 f"Could not read checkpoint file {checkpoint_path}: {e}. Processing all (or as per slice)."
@@ -223,6 +235,10 @@ def process_dataset_videos(
         d.relative_to(input_root).as_posix()
         for d in all_potential_dirs_absolute
     ]
+
+    if dry_run:
+        logging.debug(f"[DRY RUN] All potential absolute dirs: {all_potential_dirs_absolute}")
+        logging.debug(f"[DRY RUN] All potential relative dirs: {all_potential_dirs_relative}")
 
     logging.info(
         f"Found {len(all_potential_dirs_relative)} total potential video directories in input."
@@ -242,6 +258,8 @@ def process_dataset_videos(
             f"{len(processed_dirs_from_checkpoint) - len(valid_processed_relative_paths)} "
             f"stale directory paths removed from checkpoint list."
         )
+        if dry_run:
+            logging.debug(f"[DRY RUN] Valid processed relative paths (after checking existence): {valid_processed_relative_paths}")
 
     relative_dirs_to_consider = sorted(
         [
@@ -250,10 +268,8 @@ def process_dataset_videos(
             if rel_path not in valid_processed_relative_paths
         ]
     )
-
-    logging.info(
-        f"{len(relative_dirs_to_consider)} directories remaining to consider after checkpoint filtering."
-    )
+    if dry_run:
+        logging.debug(f"[DRY RUN] Relative dirs to consider (after checkpoint filtering): {relative_dirs_to_consider}")
 
     # Determine the slice based on the list of directories to consider
     total_dirs_to_consider = len(relative_dirs_to_consider)
@@ -269,11 +285,15 @@ def process_dataset_videos(
         logging.error(
             f"Invalid start_index: {start_index}. For list of {total_dirs_to_consider} items, must be 0 <= index <= {total_dirs_to_consider}."
         )
+        if dry_run:
+            logging.debug(f"[DRY RUN] Start index validation failed: start={actual_start_index}, total={total_dirs_to_consider}")
         return
     if not (actual_start_index <= actual_end_index <= total_dirs_to_consider):
         logging.error(
             f"Invalid end_index: {end_index}. For list of {total_dirs_to_consider} items, must be start_index <= index <= {total_dirs_to_consider}."
         )
+        if dry_run:
+            logging.debug(f"[DRY RUN] End index validation failed: start={actual_start_index}, end={actual_end_index}, total={total_dirs_to_consider}")
         return
 
     # Get the final list of relative paths for this run's slice
@@ -286,6 +306,9 @@ def process_dataset_videos(
         rel_path: (input_root / rel_path)
         for rel_path in sliced_relative_dirs_for_this_run
     }
+    if dry_run:
+        logging.debug(f"[DRY RUN] Sliced relative dirs for this run: {sliced_relative_dirs_for_this_run}")
+        logging.debug(f"[DRY RUN] Absolute dirs map for this run: {absolute_dirs_for_this_run_map}")
 
     target_count = len(sliced_relative_dirs_for_this_run)
 
@@ -309,6 +332,29 @@ def process_dataset_videos(
     no_video_run_count = 0  # Renamed
     total_frames_saved_this_run = 0  # Renamed
     start_time = time.time()
+
+    if dry_run:
+        logging.info(f"[DRY RUN] Would attempt to process {target_count} directories:")
+        for i, rel_path in enumerate(sliced_relative_dirs_for_this_run):
+            abs_path = absolute_dirs_for_this_run_map[rel_path]
+            logging.info(f"[DRY RUN]   {i+1}. Relative: '{rel_path}', Absolute: '{abs_path}'")
+        logging.info("[DRY RUN] Skipping actual ProcessPoolExecutor and video processing.")
+        # Log summary for dry run
+        duration = time.time() - start_time
+        logging.info(f"--- Dry Run Summary ---")
+        logging.info(f"Input root: {input_root}")
+        logging.info(f"Output root: {output_root}")
+        logging.info(f"Checkpoint file: {checkpoint_path}")
+        logging.info(f"Target FPS: {target_fps}, Max Dimension: {max_dimension}, Max Frames/Video: {max_frames_per_video}")
+        logging.info(f"Max workers: {max_workers if max_workers else os.cpu_count()}")
+        logging.info(f"Original slice indices: start={start_index}, end={end_index}")
+        logging.info(f"Dirs found in input: {len(all_potential_dirs_relative)}")
+        logging.info(f"Dirs loaded from checkpoint: {len(processed_dirs_from_checkpoint)}")
+        logging.info(f"Dirs to consider after checkpoint: {total_dirs_to_consider}")
+        logging.info(f"Actual slice for this run: {actual_start_index} to {actual_end_index-1}")
+        logging.info(f"Number of directories that WOULD BE processed: {target_count}")
+        logging.info(f"Dry run setup duration: {duration:.2f} seconds")
+        return # End execution for dry run
 
     futures = []
     if not max_workers:  # Handle default for max_workers if None
@@ -414,6 +460,7 @@ class PipelineCLI:
         end_index: int | None = None,
         max_workers: int | None = None,
         checkpoint_log: str = ".processed_video_dirs.log",
+        dry_run: bool = False,
     ):
         """
         Processes videos from subdirectories in dataset_path and saves extracted frames.
@@ -445,6 +492,9 @@ class PipelineCLI:
             checkpoint_log (str, optional): Name for the checkpoint log file.
                                             Stored in the output_path.
                                             Defaults to '.processed_video_dirs.log'.
+            dry_run (bool, optional): If True, simulates the run, logs actions,
+                                      but does not actually process video files.
+                                      Defaults to False.
         """
         if max_dimension == 0:  # Allow 0 to mean None for convenience from CLI
             max_dimension = None
@@ -459,6 +509,7 @@ class PipelineCLI:
             end_index=end_index,
             max_workers=max_workers,
             checkpoint_file_name=checkpoint_log,
+            dry_run=dry_run,
         )
 
 

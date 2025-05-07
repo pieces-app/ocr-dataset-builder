@@ -155,7 +155,7 @@ def extract_frames(
                 continue
 
             current_second = int(round(frame_count / native_fps))
-            frame_filename = f"frame_{current_second:06d}.png"
+            frame_filename = f"frame_{current_second:06d}.jpg"
             frame_path = output_dir_obj / frame_filename
 
             frame_to_process = frame

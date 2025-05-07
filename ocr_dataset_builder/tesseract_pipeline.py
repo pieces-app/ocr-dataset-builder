@@ -144,7 +144,8 @@ def run_tesseract_pipeline(
 
     logging.info(f"Input Frame Directory: {input_root}")
     logging.info(f"Output JSON Directory: {output_root}")
-    logging.info(f"Checkpoint file: {output_root / checkpoint_file_name}")
+    checkpoint_full_path = output_root / checkpoint_file_name
+    logging.info(f"Checkpoint file path: {str(checkpoint_full_path)}")
     logging.info(f"Tesseract Language: {language}")
     logging.info(
         f"Max Workers (Dirs): {max_workers if max_workers else os.cpu_count()}"
