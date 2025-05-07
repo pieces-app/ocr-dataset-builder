@@ -9,9 +9,14 @@ from torch.utils.data import Dataset
 from PIL import Image
 from torchvision import transforms # For example transform
 
-# Configure basic logging
+from rich.logging import RichHandler
+
+# Configure basic logging with RichHandler
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(rich_tracebacks=True, markup=True, show_path=False)],
 )
 
 
@@ -21,81 +26,65 @@ class OcrMultimodalDataset(Dataset):
 
     This dataset is designed to work with a specific directory structure where frame images,
     LLM (Large Language Model) outputs, and Tesseract OCR outputs are organized per video.
+    It also includes filepaths to original video metadata and subtitle files.
 
     **Expected Directory Structure:**
 
-    1.  `frames_root_dir/`
+    1.  `frames_root_dir/` (Processed frame images)
         ├── VIDEO_ID_1/
         │   ├── frame_0000.png
-        │   ├── frame_0001.png
         │   └── ...
         └── VIDEO_ID_2/
-            ├── frame_0000.png
             └── ...
 
-    2.  `llm_outputs_root_dir/`
+    2.  `llm_outputs_root_dir/` (LLM JSON outputs)
         ├── VIDEO_ID_1/
         │   ├── llm_output_batch_0001.json
-        │   ├── llm_output_batch_0002.json
-        │   └── ... (one or more batch files per video)
+        │   └── ...
         └── VIDEO_ID_2/
             └── ...
+        (See `__init__` docstring for LLM batch JSON structure)
 
-        Each `llm_output_batch_xxxx.json` file is expected to contain:
-        {
-            "task1_raw_ocr": ["text_for_frame1_in_batch", "text_for_frame2_in_batch", ...],
-            "task2_augmented": ["text_for_frame1_in_batch", ...], 
-            "task3_cleaned": ["text_for_frame1_in_batch", ...],
-            "task4_markdown": ["markdown_for_frame1_in_batch", ...],
-            "task5_summary": "Narrative summary applicable to all frames in this batch.",
-            "frame_ids": ["frame_xxxxxx.png", ...] (Optional, not currently used by loader but good practice)
-        }
-        Note: For "task2", the loader also checks for an alternate key specified by `alternate_task2_key`.
-
-    3.  `tesseract_outputs_root_dir/`
+    3.  `tesseract_outputs_root_dir/` (Tesseract JSON outputs)
         ├── VIDEO_ID_1/
         │   └── tesseract_ocr.json
         └── VIDEO_ID_2/
             └── ...
+        (Maps frame filenames to Tesseract text)
 
-        Each `tesseract_ocr.json` file is expected to be a dictionary mapping frame filenames
-        to their Tesseract OCR text:
-        {
-            "frame_0000.png": "Tesseract text for frame 0",
-            "frame_0001.png": "Tesseract text for frame 1",
-            ...
-        }
-
-    **Data Aggregation and Mapping:**
-    - For each video, LLM task data (Task 1-4) from all its sorted batch files are concatenated.
-    - The `task5_summary` from each LLM batch file is associated with all frames processed in that batch.
-    - These concatenated LLM task outputs are then mapped 1-to-1 with the sorted frame image files for that video.
-    - Tesseract OCR data is mapped directly using frame filenames.
-
-    **F:i-1 Notation:**
-    - The dataset handles a special notation `F:index` (e.g., `F:0`, `F:15`) within the LLM task strings 
-      (Tasks 1-4). This indicates that the content for the current frame is the same as the content of the
-      referenced frame (0-indexed within the video's frames for that task).
-    - If text follows `F:index`, it's appended to the reconstructed content of the referenced frame.
-    - This reconstruction happens on-the-fly during `__getitem__`.
+    4.  `original_video_data_root_dir/` (Original video data before frame extraction)
+        ├── VIDEO_ID_1/
+        │   ├── video_file.mp4  (Actual video file, not directly used by dataset but illustrative)
+        │   ├── some_name.info.json (Video metadata file)
+        │   ├── english_subs.srt (Subtitle file)
+        │   └── french_subs.vtt (Another subtitle file)
+        └── VIDEO_ID_2/
+            └── ...
 
     **Output per Sample (`__getitem__`):**
     Returns a dictionary with the following keys:
     - `"frame_path"` (str): Absolute path to the frame image.
-    - `"image"` (torch.Tensor or PIL.Image): The loaded frame image (transformed if `image_transform` is set).
+    - `"image"` (torch.Tensor or PIL.Image): The loaded frame image.
     - `"task1_raw_ocr"` (str): Reconstructed LLM output for Task 1.
     - `"task2_augmented"` (str): Reconstructed LLM output for Task 2.
     - `"task3_cleaned"` (str): Reconstructed LLM output for Task 3.
     - `"task4_markdown"` (str): Reconstructed LLM output for Task 4.
-    - `"task5_summary"` (str): Narrative summary for the frame (from its LLM batch).
+    - `"task5_summary"` (str): Narrative summary for the frame.
     - `"tesseract_ocr"` (str): Tesseract OCR text for the frame.
+    - `"metadata_filepath"` (Optional[str]): Path to the `.info.json` metadata file for the video, or None.
+    - `"subtitle_filepaths"` (List[str]): List of paths to found subtitle files (.srt, .vtt) for the video.
     """
+
+    SUBTITLE_EXTENSIONS = [".srt", ".vtt"]
+    METADATA_EXTENSION = ".info.json"
+
 
     def __init__(
         self,
         frames_root_dir: Union[str, Path],
         llm_outputs_root_dir: Union[str, Path],
         tesseract_outputs_root_dir: Union[str, Path],
+        original_video_data_root_dir: Union[str, Path], # New parameter
         image_transform: Optional[Callable] = None,
         # List of specific video_ids to load, if None, load all found
         video_ids_to_load: Optional[List[str]] = None,
@@ -120,6 +109,9 @@ class OcrMultimodalDataset(Dataset):
                 organized by video ID subdirectories, with each containing `llm_output_batch_*.json` files.
             tesseract_outputs_root_dir (Union[str, Path]): Path to the root directory containing Tesseract JSON
                 outputs, organized by video ID subdirectories, with each containing a `tesseract_ocr.json` file.
+            original_video_data_root_dir (Union[str, Path]): Path to the root directory containing original video data,
+                where metadata (.info.json) and subtitle (.srt, .vtt) files are located
+                within their respective video ID subdirectories.
             image_transform (Optional[Callable], optional): A function/transform to apply to the PIL Image.
                 Defaults to None.
             video_ids_to_load (Optional[List[str]], optional): A specific list of video IDs to load.
@@ -134,6 +126,7 @@ class OcrMultimodalDataset(Dataset):
         self.frames_root_dir = Path(frames_root_dir)
         self.llm_outputs_root_dir = Path(llm_outputs_root_dir)
         self.tesseract_outputs_root_dir = Path(tesseract_outputs_root_dir)
+        self.original_video_data_root_dir = Path(original_video_data_root_dir)
         self.image_transform = image_transform
         self.task_keys = task_keys
         self.alternate_task2_key = alternate_task2_key
@@ -141,8 +134,34 @@ class OcrMultimodalDataset(Dataset):
         self.samples = []  # Will store (frame_path, video_id, frame_stem, frame_idx_in_video)
         self.llm_data_for_video: Dict[str, Dict[str, List[str]]] = {}
         self.tesseract_data_for_video: Dict[str, Dict[str, str]] = {}
+        self.auxiliary_file_paths: Dict[str, Dict[str, Any]] = {} # For metadata/subtitle paths
 
         self._load_data(video_ids_to_load)
+
+    @staticmethod
+    def _find_metadata_file(directory: Path) -> Optional[Path]:
+        """Finds the first .info.json file in a directory."""
+        if not directory.is_dir():
+            return None
+        metadata_files = list(directory.glob(f"*{OcrMultimodalDataset.METADATA_EXTENSION}"))
+        if metadata_files:
+            if len(metadata_files) > 1:
+                logging.debug( # Changed to debug
+                    f"Multiple {OcrMultimodalDataset.METADATA_EXTENSION} files found in {directory.name}, "
+                    f"using first: {metadata_files[0].name}"
+                )
+            return metadata_files[0]
+        return None
+
+    @staticmethod
+    def _find_subtitle_files(directory: Path) -> List[Path]:
+        """Finds all subtitle files (.srt, .vtt) in a directory."""
+        if not directory.is_dir():
+            return []
+        subtitle_files = []
+        for ext in OcrMultimodalDataset.SUBTITLE_EXTENSIONS:
+            subtitle_files.extend(list(directory.glob(f"*{ext}")))
+        return sorted(subtitle_files) # Sort for consistent ordering
 
     def _reconstruct_llm_output(
         self,
@@ -214,21 +233,23 @@ class OcrMultimodalDataset(Dataset):
 
     def _load_data(self, video_ids_to_load: Optional[List[str]] = None):
         """
-        Scans the data directories, loads and preprocesses LLM and Tesseract data.
+        Scans the data directories, loads, validates, and preprocesses LLM and Tesseract data.
+        Also finds and stores paths to original video metadata and subtitle files.
+        Only includes samples if frame images, structurally complete LLM data (from valid batches),
+        and Tesseract OCR text are all present.
 
-        For each video:
-        1. Finds all frame image files and sorts them.
-        2. Finds all `llm_output_batch_*.json` files, sorts them, and concatenates their task data.
-           - `task5_summary` is expanded to apply to all frames within its original batch.
-        3. Loads `tesseract_ocr.json`.
-        4. Validates frame counts between image files and loaded LLM data.
-        5. Populates `self.samples` with tuples of (frame_path, video_id, frame_stem, frame_idx_in_video).
-        6. Stores aggregated LLM data in `self.llm_data_for_video` and Tesseract data in `self.tesseract_data_for_video`.
+        Validation Steps:
+        1. Video Level: Checks for existence of frame, LLM, and Tesseract directories/files.
+        2. LLM Batch Level: Validates each LLM batch file for JSON format and ensures all core task
+           lists (Task 1-4) are present and have consistent lengths. Task5_summary must exist.
+           Invalid batches are skipped.
+        3. Frame Level (Post Aggregation): Ensures each potential sample (frame image + aggregated LLM data)
+           also has a corresponding entry in the Tesseract OCR JSON file for that video.
 
         Args:
             video_ids_to_load (Optional[List[str]]): Specific video IDs to load. If None, loads all.
         """
-        logging.info("Scanning dataset...")
+        logging.info("Starting dataset scan with STRICT filtering...")
         possible_video_ids = sorted(
             [d.name for d in self.frames_root_dir.iterdir() if d.is_dir()]
         )
@@ -237,144 +258,198 @@ class OcrMultimodalDataset(Dataset):
         if video_ids_to_load:
             target_video_ids = [vid for vid in video_ids_to_load if vid in possible_video_ids]
             if not target_video_ids:
-                logging.warning("None of the specified video_ids_to_load were found. Loading all videos.")
+                logging.warning("None of the specified video_ids_to_load were found. Attempting to load all videos.")
                 target_video_ids = possible_video_ids
             elif len(target_video_ids) < len(video_ids_to_load):
                 omitted = set(video_ids_to_load) - set(target_video_ids)
                 logging.warning(f"Some specified video_ids not found in frames_root_dir: {omitted}")
 
-
         for video_id in target_video_ids:
+            logging.debug(f"Processing video_id: {video_id}")
+            
+            # Paths for processed data
             video_frames_dir = self.frames_root_dir / video_id
             video_llm_dir = self.llm_outputs_root_dir / video_id
-            video_tesseract_dir = self.tesseract_outputs_root_dir / video_id
+            video_tesseract_file = self.tesseract_outputs_root_dir / video_id / "tesseract_ocr.json"
 
+            # Path for original video data (metadata, subtitles)
+            original_video_dir = self.original_video_data_root_dir / video_id
+            
+            # Find auxiliary files
+            metadata_file_path = self._find_metadata_file(original_video_dir)
+            subtitle_file_paths = self._find_subtitle_files(original_video_dir)
+            self.auxiliary_file_paths[video_id] = {
+                "metadata_filepath": str(metadata_file_path) if metadata_file_path else None,
+                "subtitle_filepaths": [str(sf) for sf in subtitle_file_paths]
+            }
+            if not original_video_dir.is_dir():
+                 logging.warning(f"Original video data directory not found for {video_id} at {original_video_dir}. Metadata/subtitles will be missing.")
+
+
+            if not video_frames_dir.is_dir():
+                logging.warning(f"Frames directory not found for {video_id} at {video_frames_dir}. Skipping video.")
+                continue
             if not video_llm_dir.is_dir():
-                logging.warning(f"LLM output directory not found for {video_id}, skipping.")
+                logging.warning(f"LLM output directory not found for {video_id} at {video_llm_dir}. Skipping video.")
                 continue
-            if not video_tesseract_dir.is_dir():
-                logging.warning(f"Tesseract output directory not found for {video_id}, skipping.")
+            if not video_tesseract_file.is_file():
+                logging.warning(f"Tesseract OCR JSON file not found for {video_id} at {video_tesseract_file}. Skipping video.")
                 continue
 
-            frame_files = sorted(
+            frame_paths_for_video = sorted(
                 [f for f in video_frames_dir.iterdir() if f.is_file() and f.suffix.lower() in ['.png', '.jpg', '.jpeg']]
             )
-            if not frame_files:
-                logging.warning(f"No frame images found in {video_frames_dir}, skipping {video_id}.")
+            if not frame_paths_for_video:
+                logging.warning(f"No frame images found in {video_frames_dir}. Skipping video {video_id}.")
                 continue
 
-            # Initialize per-video LLM data storage
-            self.llm_data_for_video[video_id] = {key: [] for key in self.task_keys if key != "task5_summary"}
-            self.llm_data_for_video[video_id]["task5_summary_list"] = [] # Special list for narratives
+            try:
+                with open(video_tesseract_file, "r") as f:
+                    tesseract_data_for_this_video = json.load(f)
+            except json.JSONDecodeError as e:
+                logging.error(f"Error decoding Tesseract JSON {video_tesseract_file} for {video_id}: {e}. Skipping video.")
+                continue
+            except Exception as e:
+                logging.error(f"Unexpected error loading Tesseract JSON {video_tesseract_file} for {video_id}: {e}. Skipping video.")
+                continue
 
             llm_batch_files = sorted(video_llm_dir.glob("llm_output_batch_*.json"))
             if not llm_batch_files:
-                logging.warning(f"No LLM batch files found for {video_id} in {video_llm_dir}, skipping.")
+                logging.warning(f"No LLM batch files found for {video_id} in {video_llm_dir}. Skipping video.")
                 continue
-            
-            # Concatenate LLM task data from all batch files for this video
-            current_video_frame_count_from_llm = 0
+
+            # Aggregate LLM data from all VALID batches for this video
+            aggregated_llm_tasks_raw = {key: [] for key in self.task_keys if key != "task5_summary"}
+            aggregated_llm_summaries_raw = []
+            llm_processed_frame_count_for_video = 0
+
             for batch_file_path in llm_batch_files:
                 try:
                     with open(batch_file_path, "r") as f:
                         batch_data = json.load(f)
-                    
-                    frames_in_this_batch = 0
-                    # Check Task 1 to get frame count for this batch
-                    if self.task_keys[0] in batch_data and isinstance(batch_data[self.task_keys[0]], list):
-                       frames_in_this_batch = len(batch_data[self.task_keys[0]])
-                    
-                    if frames_in_this_batch == 0:
-                        logging.warning(f"LLM batch file {batch_file_path} has no frames in task1 list. Skipping this batch.")
-                        continue
-                    
-                    current_video_frame_count_from_llm += frames_in_this_batch
-
-                    for task_idx, task_key in enumerate(self.task_keys):
-                        if task_key == "task5_summary":
-                            summary = batch_data.get(task_key, "")
-                            self.llm_data_for_video[video_id]["task5_summary_list"].extend(
-                                [summary] * frames_in_this_batch
-                            )
-                        else:
-                            actual_task_key_in_file = task_key
-                            if task_key == "task2_augmented" and task_key not in batch_data:
-                                if self.alternate_task2_key in batch_data:
-                                    actual_task_key_in_file = self.alternate_task2_key
-                                else:
-                                    logging.warning(f"Neither '{task_key}' nor '{self.alternate_task2_key}' found in {batch_file_path} for {video_id}. Filling with empty strings.")
-                                    self.llm_data_for_video[video_id][task_key].extend([""] * frames_in_this_batch)
-                                    continue
-                            
-                            task_content_list = batch_data.get(actual_task_key_in_file)
-                            if isinstance(task_content_list, list) and len(task_content_list) == frames_in_this_batch:
-                                self.llm_data_for_video[video_id][task_key].extend(task_content_list)
-                            else:
-                                logging.warning(
-                                    f"Task '{actual_task_key_in_file}' in {batch_file_path} for {video_id} is missing, not a list, or length mismatch. "
-                                    f"Expected {frames_in_this_batch}, got {len(task_content_list) if isinstance(task_content_list, list) else 'N/A'}. "
-                                    f"Filling with empty strings."
-                                )
-                                self.llm_data_for_video[video_id][task_key].extend([""] * frames_in_this_batch)
-
-                except json.JSONDecodeError:
-                    logging.error(f"Error decoding JSON from {batch_file_path} for {video_id}. Skipping this batch.")
+                except json.JSONDecodeError as e:
+                    logging.error(f"Error decoding LLM batch JSON {batch_file_path} for {video_id}: {e}. Skipping batch.")
+                    continue
                 except Exception as e:
-                    logging.error(f"Unexpected error loading batch {batch_file_path} for {video_id}: {e}. Skipping this batch.")
-            
-            # Validate frame counts
-            if len(frame_files) != current_video_frame_count_from_llm:
-                logging.warning(
-                    f"Mismatch in frame count for {video_id}: "
-                    f"{len(frame_files)} image files found, but LLM data covers {current_video_frame_count_from_llm} frames. "
-                    f"Dataset will be truncated to the minimum of these. This might indicate missing/corrupt LLM batch files."
-                )
-            
-            num_frames_for_video = min(len(frame_files), current_video_frame_count_from_llm)
-            if num_frames_for_video == 0:
-                logging.warning(f"Zero usable frames for video {video_id} after LLM data reconciliation. Skipping.")
-                # Clean up potentially partially filled data for this video_id
-                if video_id in self.llm_data_for_video: del self.llm_data_for_video[video_id]
+                    logging.error(f"Unexpected error loading LLM batch {batch_file_path} for {video_id}: {e}. Skipping batch.")
+                    continue
+
+                # Determine number of frames in this batch (e.g., from task1_raw_ocr)
+                primary_task_key = self.task_keys[0]
+                num_frames_in_batch = len(batch_data.get(primary_task_key, []))
+                if num_frames_in_batch == 0:
+                    logging.warning(f"LLM batch {batch_file_path} for {video_id} has 0 frames based on '{primary_task_key}'. Skipping batch.")
+                    continue
+
+                is_batch_structurally_valid = True
+                current_batch_task_data_temp = {}
+
+                # Validate tasks 1-4 structure
+                for task_key_template in self.task_keys:
+                    if task_key_template == "task5_summary":
+                        if task_key_template not in batch_data:
+                            logging.warning(f"LLM batch {batch_file_path} for {video_id} is missing '{task_key_template}'. Skipping batch.")
+                            is_batch_structurally_valid = False
+                            break
+                        current_batch_task_data_temp[task_key_template] = batch_data[task_key_template]
+                        continue # Handled separately for aggregation
+
+                    actual_key_in_file = task_key_template
+                    task_list_from_batch = batch_data.get(actual_key_in_file)
+
+                    if task_key_template == "task2_augmented" and not task_list_from_batch:
+                        if self.alternate_task2_key in batch_data:
+                            actual_key_in_file = self.alternate_task2_key
+                            task_list_from_batch = batch_data.get(actual_key_in_file)
+                    
+                    if not isinstance(task_list_from_batch, list) or len(task_list_from_batch) != num_frames_in_batch:
+                        logging.warning(
+                            f"LLM batch {batch_file_path} for {video_id}: Task '{actual_key_in_file}' is missing, not a list, or length mismatch. "
+                            f"Expected {num_frames_in_batch} items, found {len(task_list_from_batch) if isinstance(task_list_from_batch, list) else 'N/A'}. Skipping batch."
+                        )
+                        is_batch_structurally_valid = False
+                        break
+                    current_batch_task_data_temp[actual_key_in_file] = task_list_from_batch
+                
+                if not is_batch_structurally_valid:
+                    continue # Skip this batch
+
+                # Batch is valid, append its data
+                for task_key_template in self.task_keys:
+                    if task_key_template == "task5_summary":
+                        aggregated_llm_summaries_raw.extend([current_batch_task_data_temp[task_key_template]] * num_frames_in_batch)
+                    elif task_key_template == "task2_augmented":
+                        # Append from primary key if it existed, else from alternate if that was used
+                        if task_key_template in current_batch_task_data_temp: # Primary was found and valid
+                            aggregated_llm_tasks_raw[task_key_template].extend(current_batch_task_data_temp[task_key_template])
+                        elif self.alternate_task2_key in current_batch_task_data_temp: # Alternate was found and valid
+                            aggregated_llm_tasks_raw[task_key_template].extend(current_batch_task_data_temp[self.alternate_task2_key])
+                        # This case should ideally not be hit if batch validation was thorough for task2 presence
+                    elif task_key_template in current_batch_task_data_temp: # For task1, task3, task4
+                         aggregated_llm_tasks_raw[task_key_template].extend(current_batch_task_data_temp[task_key_template])
+                
+                llm_processed_frame_count_for_video += num_frames_in_batch
+            # End of LLM batch processing for this video
+
+            if llm_processed_frame_count_for_video == 0:
+                logging.warning(f"No valid LLM data aggregated for {video_id} after processing all batches. Skipping video.")
                 continue
 
-
-            # Truncate LLM data if necessary due to frame count mismatch
-            for task_key in self.llm_data_for_video[video_id]:
-                self.llm_data_for_video[video_id][task_key] = self.llm_data_for_video[video_id][task_key][:num_frames_for_video]
-
-
-            # Load Tesseract data
-            tesseract_file = video_tesseract_dir / "tesseract_ocr.json"
-            if tesseract_file.is_file():
-                try:
-                    with open(tesseract_file, "r") as f:
-                        self.tesseract_data_for_video[video_id] = json.load(f)
-                except json.JSONDecodeError:
-                    logging.error(f"Error decoding Tesseract JSON for {video_id}. Tesseract data will be missing for this video.")
-                    self.tesseract_data_for_video[video_id] = {} # Ensure key exists
-            else:
-                logging.warning(f"Tesseract file {tesseract_file} not found for {video_id}. Tesseract data will be missing.")
-                self.tesseract_data_for_video[video_id] = {}
-
-
-            # Create samples for this video
-            for i in range(num_frames_for_video):
-                frame_path = frame_files[i]
-                frame_stem = frame_path.stem
-                self.samples.append((frame_path, video_id, frame_stem, i))
+            # Now filter frames based on tesseract availability and create final samples
+            num_potential_samples = min(len(frame_paths_for_video), llm_processed_frame_count_for_video)
             
-            logging.info(f"Loaded {num_frames_for_video} samples for video: {video_id}")
+            video_specific_samples = []
+            # These will store only data for frames that pass all checks for this video
+            final_video_llm_tasks = {key: [] for key in self.task_keys if key != "task5_summary"}
+            final_video_llm_summaries = []
+            final_video_tesseract = {}
 
+            for frame_idx in range(num_potential_samples):
+                current_frame_path = frame_paths_for_video[frame_idx]
+                current_frame_name = current_frame_path.name
+                current_frame_stem = current_frame_path.stem
+
+                tesseract_text_for_frame = tesseract_data_for_this_video.get(current_frame_name)
+                if tesseract_text_for_frame is None:
+                    # Try with stem and common extensions as a fallback, though direct name match is preferred
+                    for ext in ['.png', '.jpg', '.jpeg']:
+                        tesseract_text_for_frame = tesseract_data_for_this_video.get(current_frame_stem + ext)
+                        if tesseract_text_for_frame is not None: break
+                
+                if tesseract_text_for_frame is None:
+                    logging.debug(f"Tesseract data missing for frame {current_frame_name} in {video_id}. Skipping frame.")
+                    continue # Skip this frame, it doesn't have Tesseract data
+                
+                # Frame has image, LLM data (from valid batch), and Tesseract data. Add it.
+                # The `frame_idx_in_video_for_storage` is the index within the *filtered* lists for this video.
+                frame_idx_in_video_for_storage = len(final_video_llm_tasks[self.task_keys[0]]) 
+                video_specific_samples.append((current_frame_path, video_id, current_frame_stem, frame_idx_in_video_for_storage))
+
+                for task_key_template in self.task_keys:
+                    if task_key_template == "task5_summary":
+                        final_video_llm_summaries.append(aggregated_llm_summaries_raw[frame_idx])
+                    else:
+                        final_video_llm_tasks[task_key_template].append(aggregated_llm_tasks_raw[task_key_template][frame_idx])
+                
+                final_video_tesseract[current_frame_name] = tesseract_text_for_frame
+
+            if video_specific_samples:
+                self.samples.extend(video_specific_samples)
+                # Store the filtered LLM and Tesseract data for this video
+                self.llm_data_for_video[video_id] = final_video_llm_tasks
+                self.llm_data_for_video[video_id]["task5_summary_list"] = final_video_llm_summaries # Add summaries list
+                self.tesseract_data_for_video[video_id] = final_video_tesseract
+                logging.info(f"Successfully loaded {len(video_specific_samples)} validated samples for video: {video_id}.")
+            else:
+                logging.warning(f"No validated samples found for video {video_id} after all checks.")
+
+        # Final summary log
         if not self.samples:
             logging.error(
-                "No samples loaded. Check dataset paths and structure. "
-                "Expected structure: frames_root/VID_ID/frame.png, "
-                "llm_outputs_root/VID_ID/llm_output_batch_*.json, "
-                "tesseract_outputs_root/VID_ID/tesseract_ocr.json"
+                "STRICT MODE: No samples loaded. Check dataset paths, file structures, LLM batch validity, and Tesseract data presence for all frames."
             )
         else:
-            logging.info(f"Dataset loaded successfully with {len(self.samples)} total samples from {len(self.llm_data_for_video)} videos.")
-
+            logging.info(f"STRICT MODE: Dataset loaded successfully with {len(self.samples)} total validated samples from {len(self.llm_data_for_video)} videos.")
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -393,7 +468,8 @@ class OcrMultimodalDataset(Dataset):
         Returns:
             Dict[str, Any]: A dictionary representing the multimodal data sample.
                 Keys include 'frame_path', 'image', 'task1_raw_ocr', 'task2_augmented',
-                'task3_cleaned', 'task4_markdown', 'task5_summary', 'tesseract_ocr'.
+                'task3_cleaned', 'task4_markdown', 'task5_summary', 'tesseract_ocr',
+                'metadata_filepath', 'subtitle_filepaths'.
 
         Raises:
             IndexError: If the idx is out of bounds.
@@ -419,7 +495,7 @@ class OcrMultimodalDataset(Dataset):
 
         video_llm_data = self.llm_data_for_video.get(video_id, {})
         
-        for task_key_idx, task_key_template in enumerate(self.task_keys):
+        for task_key_template in self.task_keys:
             if task_key_template == "task5_summary":
                 # task5_summary is handled via the "task5_summary_list" which is already per-frame
                 item[task_key_template] = video_llm_data.get("task5_summary_list", [])[frame_idx_in_video] if frame_idx_in_video < len(video_llm_data.get("task5_summary_list", [])) else ""
@@ -468,6 +544,11 @@ class OcrMultimodalDataset(Dataset):
             if tesseract_text:
                 break
         item["tesseract_ocr"] = tesseract_text
+        
+        # Add auxiliary file paths
+        aux_paths = self.auxiliary_file_paths.get(video_id, {"metadata_filepath": None, "subtitle_filepaths": []})
+        item["metadata_filepath"] = aux_paths["metadata_filepath"]
+        item["subtitle_filepaths"] = aux_paths["subtitle_filepaths"]
         
         return item
 
@@ -524,121 +605,188 @@ def _create_dummy_frame_images(dir_path: Path, num_frames: int):
         except Exception as e:
             logging.error(f"Failed to create dummy image frame_{i:06d}.png: {e}")
 
+def _create_dummy_original_video_files(original_video_dir: Path, video_id: str):
+    """Creates dummy .info.json and .srt files."""
+    original_video_dir.mkdir(parents=True, exist_ok=True)
+    # Create dummy .info.json
+    with open(original_video_dir / f"{video_id}.info.json", "w") as f:
+        json.dump({"title": f"Dummy Title for {video_id}", "uploader": "Dummy Uploader"}, f, indent=4)
+    # Create dummy .srt file
+    with open(original_video_dir / f"{video_id}_en.srt", "w") as f:
+        f.write("1\n00:00:01,000 --> 00:00:02,000\nDummy Subtitle 1\n\n")
+        f.write("2\n00:00:03,000 --> 00:00:04,000\nDummy Subtitle 2\n")
+    # Create a dummy .vtt as well
+    with open(original_video_dir / f"{video_id}_fr.vtt", "w") as f:
+        f.write("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nDummy VTT Subtitle 1\n\n")
+        f.write("00:00:03.000 --> 00:00:04.000\nDummy VTT Subtitle 2\n")
+
 
 if __name__ == "__main__":
-    logging.getLogger().setLevel(logging.INFO) # Ensure info logs are visible for example
-    
-    dummy_base_dir = Path("./dummy_ocr_multimodal_dataset")
-    if dummy_base_dir.exists():
-        shutil.rmtree(dummy_base_dir)
-    dummy_base_dir.mkdir(parents=True, exist_ok=True)
+    logging.getLogger().setLevel(logging.INFO) # Ensure info logs are visible
 
-    frames_root = dummy_base_dir / "frames"
-    llm_root = dummy_base_dir / "llm_outputs"
-    tesseract_root = dummy_base_dir / "tesseract_outputs"
+    # --- Comment out or remove dummy data creation ---
+    # dummy_base_dir = Path("./dummy_ocr_multimodal_dataset_with_originals")
+    # if dummy_base_dir.exists():
+    #     shutil.rmtree(dummy_base_dir)
+    # dummy_base_dir.mkdir(parents=True, exist_ok=True)
+    # 
+    # frames_root_dummy = dummy_base_dir / "frames"
+    # llm_root_dummy = dummy_base_dir / "llm_outputs"
+    # tesseract_root_dummy = dummy_base_dir / "tesseract_outputs"
+    # 
+    # frames_root_dummy.mkdir()
+    # llm_root_dummy.mkdir()
+    # tesseract_root_dummy.mkdir()
+    # 
+    # video_ids_dummy = ["video1", "video2"]
+    # frames_per_video_map_dummy = {"video1": 7, "video2": 12}
+    # frames_per_llm_batch_dummy = 3
+    # 
+    # dataset_task_keys_for_generator = [
+    #     "task1_raw_ocr",
+    #     "task2_augmented",
+    #     "task2_augmented_imperfections",
+    #     "task3_cleaned",
+    #     "task4_markdown",
+    #     "task5_summary"
+    # ]
+    # 
+    # for vid in video_ids_dummy:
+    #     vid_frames_dir = frames_root_dummy / vid
+    #     vid_llm_dir = llm_root_dummy / vid
+    #     vid_tesseract_dir = tesseract_root_dummy / vid
+    # 
+    #     vid_frames_dir.mkdir()
+    #     vid_llm_dir.mkdir()
+    #     vid_tesseract_dir.mkdir()
+    # 
+    #     total_frames_for_this_video = frames_per_video_map_dummy[vid]
+    #     _create_dummy_frame_images(vid_frames_dir, total_frames_for_this_video)
+    #     _create_dummy_tesseract_file(vid_tesseract_dir, total_frames_for_this_video, vid)
+    # 
+    #     num_batches = (total_frames_for_this_video + frames_per_llm_batch_dummy - 1) // frames_per_llm_batch_dummy
+    #     frames_processed_in_video = 0
+    #     for i in range(num_batches):
+    #         frames_in_this_batch = min(frames_per_llm_batch_dummy, total_frames_for_this_video - frames_processed_in_video)
+    #         if frames_in_this_batch <= 0: break
+    #         _create_dummy_llm_batch_file(
+    #             vid_llm_dir, 
+    #             i + 1, 
+    #             frames_in_this_batch, 
+    #             vid, 
+    #             dataset_task_keys_for_generator, 
+    #             "task2_augmented_imperfections"
+    #         )
+    #         frames_processed_in_video += frames_in_this_batch
+    # 
+    # logging.info(f"Dummy dataset generation skipped for real data test.")
 
-    frames_root.mkdir()
-    llm_root.mkdir()
-    tesseract_root.mkdir()
+    # --- Use Real Dataset Paths ---
+    frames_root = Path("/mnt/data-store/pieces-ocr-v-0-1-0-frames/")
+    llm_root = Path("/mnt/data-store/pieces-ocr-v-0-1-0-llm_output/")
+    tesseract_root = Path("/mnt/data-store/pieces-ocr-v-0-1-0-tesseract_output/")
+    original_video_data_root = Path("/mnt/data-store/pieces-ocr-v-0-1-0/") # Path to original videos and their metadata/subs
 
-    video_ids = ["video1", "video2"]
-    frames_per_video_map = {"video1": 7, "video2": 12} # Total frames for each video
-    frames_per_llm_batch = 5 # How many frames per llm_output_batch_*.json file
+    logging.info(f"Attempting to load real dataset from:")
+    logging.info(f"  Frames root (processed): {frames_root}")
+    logging.info(f"  LLM root (processed): {llm_root}")
+    logging.info(f"  Tesseract root (processed): {tesseract_root}")
+    logging.info(f"  Original Video Data root: {original_video_data_root}")
 
-    # Define task keys as expected by the Dataset class
-    # Note: "task5_summary" is handled internally by the dataset based on batch structure
-    dataset_task_keys = [
+    # Standard image transform
+    simple_transform = transforms.Compose([
+        transforms.Resize((256, 256)), # Resize to a common size
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+
+    # Define the task keys expected by the Dataset class loader
+    # These should match the keys used in your LLM output JSONs
+    dataset_task_keys_for_loader = [
         "task1_raw_ocr",
         "task2_augmented", # This is the primary key the Dataset will look for
         "task3_cleaned",
         "task4_markdown",
-        "task5_summary" # This is used by the dummy data generator to place it in batch files
+        "task5_summary"    # This is the narrative summary key
     ]
-    dataset_alternate_task2_key = "task2_augmented_imperfections"
+    dataset_alternate_task2_key_for_loader = "task2_augmented_imperfections"
 
-
-    for vid in video_ids:
-        vid_frames_dir = frames_root / vid
-        vid_llm_dir = llm_root / vid
-        vid_tesseract_dir = tesseract_root / vid
-
-        vid_frames_dir.mkdir()
-        vid_llm_dir.mkdir()
-        vid_tesseract_dir.mkdir()
-
-        total_frames_for_this_video = frames_per_video_map[vid]
-        _create_dummy_frame_images(vid_frames_dir, total_frames_for_this_video)
-        _create_dummy_tesseract_file(vid_tesseract_dir, total_frames_for_this_video, vid)
-
-        num_batches = (total_frames_for_this_video + frames_per_llm_batch - 1) // frames_per_llm_batch
-        frames_processed_count = 0
-        for i in range(num_batches):
-            frames_in_this_batch = min(frames_per_llm_batch, total_frames_for_this_video - frames_processed_count)
-            if frames_in_this_batch <= 0: break
-            # Pass the full list of task keys the generator expects (including alternate)
-            # The generator will use the alternate key for task2 based on batch_num
-            _create_dummy_llm_batch_file(vid_llm_dir, i + 1, frames_in_this_batch, vid, dataset_task_keys, dataset_alternate_task2_key)
-            frames_processed_count += frames_in_this_batch
-            
-    logging.info(f"Dummy dataset created at {dummy_base_dir.resolve()}")
-
-    # Example usage
-    simple_transform = transforms.Compose(
-        [
-            transforms.Resize((64, 64)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ]
-    )
+    # Optional: Load only a specific subset of video IDs for faster testing
+    # video_ids_to_test = ["#038 Asynchronous Programming in C# [ شرح بالعربي ]  #async #await #thread #task [kDUDX3VJFEc]"] 
+    video_ids_to_test = None # Load all videos
 
     dataset = OcrMultimodalDataset(
         frames_root_dir=frames_root,
         llm_outputs_root_dir=llm_root,
         tesseract_outputs_root_dir=tesseract_root,
+        original_video_data_root_dir=original_video_data_root,
         image_transform=simple_transform,
-        task_keys=dataset_task_keys, # Pass the primary task keys
-        alternate_task2_key=dataset_alternate_task2_key
+        task_keys=dataset_task_keys_for_loader,
+        alternate_task2_key=dataset_alternate_task2_key_for_loader,
+        video_ids_to_load=video_ids_to_test
     )
 
     if len(dataset) > 0:
         logging.info(f"Successfully created dataset with {len(dataset)} samples.")
         
         # Test a few samples
-        indices_to_test = [0, frames_per_video_map["video1"] -1 , len(dataset) -1 ]
-        if len(dataset) <= 5: # if dataset is small, test all
-            indices_to_test = list(range(len(dataset)))
+        # num_samples_to_show = min(5, len(dataset))
+        # indices_to_test = list(range(num_samples_to_show))
+        # if len(dataset) > num_samples_to_show: # Add a few from the end if dataset is large enough
+        #    indices_to_test.extend(list(range(len(dataset) - min(3, len(dataset)//2), len(dataset))))
+        # indices_to_test = sorted(list(set(indices_to_test))) # Ensure unique and sorted
+
+        # Simplified: Test first 3, and last 2 if dataset is large enough
+        indices_to_test = []
+        if len(dataset) > 0: indices_to_test.extend(range(min(3, len(dataset))))
+        if len(dataset) > 5: indices_to_test.extend(range(len(dataset)-2, len(dataset)))
+        indices_to_test = sorted(list(set(indices_to_test))) # Unique sorted indices
 
         for i in indices_to_test:
-            if i < len(dataset) :
+            if i < len(dataset): # Double check index before access
                 logging.info(f"--- Sample {i} ---")
-                sample = dataset[i]
-                logging.info(f"  Frame Path: {sample['frame_path']}")
-                logging.info(f"  Image Tensor Shape: {sample['image'].shape if hasattr(sample['image'], 'shape') else 'N/A'}")
-                logging.info(f"  Task 1 (Raw OCR): '{sample.get('task1_raw_ocr', '')[:50]}...'")
-                logging.info(f"  Task 2 (Augmented): '{sample.get('task2_augmented', '')[:50]}...'")
-                logging.info(f"  Task 3 (Cleaned): '{sample.get('task3_cleaned', '')[:50]}...'")
-                logging.info(f"  Task 4 (Markdown): '{sample.get('task4_markdown', '')[:50]}...'")
-                logging.info(f"  Task 5 (Narrative): '{sample.get('task5_summary', '')[:50]}...'")
-                logging.info(f"  Tesseract OCR: '{sample.get('tesseract_ocr', '')[:50]}...'")
+                try:
+                    sample = dataset[i]
+                    logging.info(f"  Frame Path: {sample.get('frame_path', 'N/A')}")
+                    logging.info(f"  Image Tensor Shape: {sample.get('image').shape if hasattr(sample.get('image'), 'shape') else 'N/A'}")
+                    for task_key in dataset_task_keys_for_loader:
+                        logging.info(f"  {task_key}: '{str(sample.get(task_key, ''))}...'")
+                    logging.info(f"  tesseract_ocr: '{str(sample.get('tesseract_ocr', ''))}...'")
+                    logging.info(f"  metadata_filepath: {sample.get('metadata_filepath', 'N/A')}")
+                    logging.info(f"  subtitle_filepaths: {sample.get('subtitle_filepaths', [])}")
+                except Exception as e:
+                    logging.error(f"Error accessing or printing sample at index {i}: {e}")
             else:
-                logging.warning(f"Index {i} out of bounds for dataset of length {len(dataset)}")
+                logging.warning(f"Test index {i} out of bounds for dataset of length {len(dataset)}")
         
-        # Test with DataLoader
-        from torch.utils.data import DataLoader
-        dataloader = DataLoader(dataset, batch_size=2, shuffle=True)
-        try:
-            batch_sample = next(iter(dataloader))
-            logging.info("--- Batch Sample from DataLoader ---")
-            logging.info(f"  Batch Image Shape: {batch_sample['image'].shape}")
-            logging.info(f"  Batch Task 1 (first item): {batch_sample['task1_raw_ocr'][0][:50]}...")
-            logging.info(f"  Batch Task 5 (first item): {batch_sample['task5_summary'][0][:50]}...")
-            logging.info("Successfully loaded a batch.")
-        except Exception as e:
-            logging.error(f"Error loading batch from DataLoader: {e}")
+        # # Test with DataLoader
+        # if len(dataset) > 0:
+        #     from torch.utils.data import DataLoader
+        #     # Ensure batch_size is not greater than dataset size if dataset is very small
+        #     effective_batch_size = min(4, len(dataset))
+        #     if effective_batch_size > 0:
+        #         dataloader = DataLoader(dataset, batch_size=effective_batch_size, shuffle=True)
+        #         try:
+        #             batch_sample = next(iter(dataloader))
+        #             logging.info("--- Batch Sample from DataLoader ---")
+        #             logging.info(f"  Batch Image Shape: {batch_sample['image'].shape}")
+        #             logging.info(f"  Batch Task 1 (first item): {str(batch_sample['task1_raw_ocr'][0])}...")
+        #             logging.info(f"  Batch Task 5 (first item): {str(batch_sample['task5_summary'][0])}...")
+        #             logging.info(f"  Batch Metadata (first item): {batch_sample['metadata_filepath'][0]}")
+        #             logging.info(f"  Batch Subtitles (first item): {batch_sample['subtitle_filepaths'][0]}") # This will be a list of lists
+        #             logging.info("Successfully loaded a batch.")
+        #         except StopIteration:
+        #             logging.warning("DataLoader was empty. This can happen if the dataset size is smaller than the batch size or 0.")
+        #         except Exception as e:
+        #             logging.error(f"Error loading batch from DataLoader: {e}")
+        #     else:
+        #         logging.info("Dataset too small or empty to create a DataLoader batch.")
+        # else:
+        #     logging.info("Dataset is empty, skipping DataLoader test.")
 
     else:
-        logging.error("Dataset creation resulted in 0 samples. Please check logs.")
+        logging.error("Dataset creation resulted in 0 samples. Please check paths and data structure of the real dataset.")
 
-    # Consider cleaning up the dummy directory after testing if not needed
+    # The dummy data cleanup is already commented out.
     # shutil.rmtree(dummy_base_dir)
     # logging.info(f"Cleaned up dummy dataset at {dummy_base_dir.resolve()}") 
