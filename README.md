@@ -15,19 +15,23 @@ This project provides tools to automatically extract frames from YouTube videos,
 
 ## 📊 Current Status (as of last update)
 
-*   ✅ **Milestone 1: Setup & Configuration**: Environment setup (Conda, Poetry), API key handling (`.env`), and Vertex AI client verification (`ocr_dataset_builder/examples/example-vertex.py`) are complete.
+*   ✅ **Milestone 1: Setup & Configuration**: Environment setup (Conda, Poetry), API key handling (`.env`), and Vertex AI client verification are complete.
 *   ✅ **Milestone 2: Frame Extraction Pipeline**:
-    *   `ocr_dataset_builder/video/processing.py` (`extract_frames` function) is implemented.
-    *   `ocr_dataset_builder/video/frame_pipeline.py` is implemented, enabling parallel processing of video directories, metadata copying, dataset slicing, CLI control, and robust checkpointing.
-*   🚧 **Milestone 3: LLM Prompt Adaptation & Initial LLM Processing Code**:
-    *   The core `ocr_dataset_builder/prompts/ocr_image_multi_task_prompt.md` has been significantly adapted for video frame sequences.
-    *   Core setup for `ocr_dataset_builder/llm/processing.py` (logging, pathing) is done; Gemini interaction logic and output parsing refinement is ongoing.
-*   🚧 **Milestone 4: LLM Pipeline Development**:
-    *   `ocr_dataset_builder/llm/pipeline.py` structure established with checkpointing, parallel processing capabilities (for directories and batches), and standardized logging. Further development on result aggregation and output formatting is in progress.
-*   🚧 **Milestone 5: Tesseract OCR Integration (Optional/Baseline)**:
-    *   `ocr_dataset_builder/tesseract/processing.py` and `ocr_dataset_builder/tesseract/pipeline.py` have been updated with standardized logging. The pipeline includes checkpointing. Role and integration finalization pending.
-*   ⏳ **Milestone 6: Full Pipeline Integration & Output Generation**: Integrating `video/frame_pipeline.py` -> (optional `tesseract/pipeline.py`) -> `llm/pipeline.py` and generating final structured output.
-*   ✅ **Documentation Foundational Work**: `docs/PIPELINE_GUIDE.md` and `docs/DATA_FORMATS.md` are substantially complete. Core scripts have improved logging and structure. `docs/MILESTONES.md` and `docs/DESIGN.md` have been updated to reflect current progress.
+    *   `ocr_dataset_builder/video/processing.py` (`extract_frames` function) is implemented and functional.
+    *   `ocr_dataset_builder/video/frame_pipeline.py` is implemented and functional, enabling parallel processing, metadata handling, slicing, CLI, and checkpointing.
+*   ✅ **Milestone 3: LLM Prompt Adaptation & Initial LLM Processing Code**:
+    *   The core `ocr_dataset_builder/prompts/ocr_image_multi_task_prompt.md` has been adapted for video frame sequences.
+    *   `ocr_dataset_builder/llm/processing.py` for image-based LLM interaction is implemented and functional.
+*   ✅ **Milestone 4: LLM Multimodal Pipeline Development**:
+    *   `ocr_dataset_builder/llm/pipeline.py` for image-based analysis is implemented and functional, with checkpointing, parallel processing, and standardized logging.
+*   ✅ **Milestone 5: Tesseract OCR Integration (Optional/Baseline)**:
+    *   `ocr_dataset_builder/tesseract/processing.py` and `ocr_dataset_builder/tesseract/pipeline.py` are implemented and functional, including checkpointing and logging.
+*   🚧 **Milestone 6: Full Pipeline Integration & Output Generation**: Integrating `video/frame_pipeline.py` -> (optional `tesseract/pipeline.py`) -> `llm/pipeline.py` (image) and `llm/text_pipeline.py` (text) and generating final structured outputs. Development of the text LLM pipeline is in progress.
+*   ✅ **Documentation Foundational Work**: `docs/PIPELINE_GUIDE.md`, `docs/DATA_FORMATS.md`, `docs/DESIGN.md`, and `docs/MILESTONES.md` have been updated to reflect current progress and the new text refinement pipeline. `docs/TEXT_LLM_PIPELINE_GUIDE.md` created.
+*   ✅ **Codebase Refactoring**: Project structure updated with `video`, `tesseract`, and `llm` submodules. Imports and documentation reflect these changes.
+*   ⏳ **New Text LLM Refinement Pipeline (Phase 2 - Implementation)**:
+    *   `ocr_dataset_builder/llm/text_processing.py` (handles LLM interaction for text).
+    *   `ocr_dataset_builder/llm/text_pipeline.py` (orchestrates the text refinement process).
 
 ## 🧩 Core Components
 

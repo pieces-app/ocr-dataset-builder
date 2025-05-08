@@ -17,12 +17,14 @@ from tqdm import tqdm
 
 
 # Import necessary functions from the other modules
-from .processing import (
+from .image_processing import (
     initialize_gemini_client,
     load_prompt,
     parse_llm_response,
     process_image_sequence,
 )
+# Import cost calculation utility from the new utils module
+from .utils.costing import calculate_gemini_cost
 
 # Configure basic logging with RichHandler
 logging.basicConfig(
@@ -42,93 +44,7 @@ DEFAULT_PROMPT_PATH = Path(
     "ocr_dataset_builder/prompts/ocr_image_multi_task_prompt.md"
 )  # Wrapped long line
 # Read default model name from env
-DEFAULT_MODEL_NAME = os.getenv("DEFAULT_GEMINI_MODEL", "gemini-2.5-pro-preview-03-25") # Updated default
-
-# --- Cost Calculation Function ---
-
-# Rates for Gemini 1.5 Pro (USD per 1 million tokens)
-# Verify these rates with official Google Cloud documentation.
-GEMINI_1_5_PRO_RATES_CONFIG = {
-    "<128k": {"input": 3.50, "output": 10.50},
-    ">=128k": {"input": 7.00, "output": 21.00},
-    "threshold_k": 128,
-}
-
-MODEL_PRICING = {
-    "gemini-1.5-pro-latest": GEMINI_1_5_PRO_RATES_CONFIG,
-    "gemini-1.5-pro-001": GEMINI_1_5_PRO_RATES_CONFIG, # Explicit alias
-    "gemini-2.5-pro-preview-03-25": GEMINI_1_5_PRO_RATES_CONFIG, # User-mentioned alias, assuming same rates
-    # Add other 1.5 Pro variants if they share these rates
-}
-
-def calculate_gemini_cost(
-    model_name: str,
-    input_tokens_data: int | CountTokensResponse,
-    output_tokens_data: int | CountTokensResponse,
-) -> float:
-    """
-    Calculates the estimated cost for a Gemini 1.5 Pro API call based on token counts.
-
-    Args:
-        model_name: The name of the Gemini 1.5 Pro model variant used.
-        input_tokens_data: The number of input tokens or CountTokensResponse.
-        output_tokens_data: The number of output tokens or CountTokensResponse.
-
-    Returns:
-        The estimated cost in USD, or 0.0 if pricing is not defined for the model.
-    """
-    pricing_config = MODEL_PRICING.get(model_name)
-
-    if not pricing_config:
-        # Try a base name if a specific version like -001 isn't found
-        base_model_name = "gemini-1.5-pro-latest" if "1.5-pro" in model_name else None
-        if base_model_name:
-            pricing_config = MODEL_PRICING.get(base_model_name)
-        
-        if not pricing_config:
-            logging.warning(
-                f"Pricing config not found for model '{model_name}'. Cost calculation will be 0."
-            )
-            return 0.0
-
-    input_tokens = 0
-    if isinstance(input_tokens_data, CountTokensResponse):
-        input_tokens = input_tokens_data.total_tokens
-    elif isinstance(input_tokens_data, int):
-        input_tokens = input_tokens_data
-
-    output_tokens = 0
-    if isinstance(output_tokens_data, CountTokensResponse):
-        output_tokens = output_tokens_data.total_tokens
-    elif isinstance(output_tokens_data, int):
-        output_tokens = output_tokens_data
-    
-    threshold_k = pricing_config.get("threshold_k", 128)
-    threshold_tokens = threshold_k * 1000
-    
-    rates_key = "<128k" if input_tokens < threshold_tokens else ">=128k"
-    specific_rates = pricing_config.get(rates_key)
-    
-    if not specific_rates or not isinstance(specific_rates, dict):
-        logging.warning(
-            f"Tiered rates for '{rates_key}' not found for model '{model_name}'. Cost calculation will be 0."
-        )
-        return 0.0
-
-    input_rate = specific_rates.get("input", 0.0)  # Per 1M tokens
-    output_rate = specific_rates.get("output", 0.0) # Per 1M tokens
-
-    input_cost = (input_tokens / 1_000_000) * input_rate
-    output_cost = (output_tokens / 1_000_000) * output_rate
-    total_cost = input_cost + output_cost
-
-    logging.debug(
-        f"Cost calc ({model_name}, Tier: {rates_key}): "
-        f"In:{input_tokens}tk @ ${input_rate:.2f}/M = ${input_cost:.6f}, "
-        f"Out:{output_tokens}tk @ ${output_rate:.2f}/M = ${output_cost:.6f}, "
-        f"Total=${total_cost:.6f}"
-    )
-    return total_cost
+DEFAULT_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gemini-2.5-pro-preview-05-06") # Updated default
 
 
 # --- Worker Function ---

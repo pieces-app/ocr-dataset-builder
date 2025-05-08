@@ -102,7 +102,7 @@ The script is run using `python -m ocr_dataset_builder.llm.llm_text_pipeline run
 *   `--output_dir` (str, required): Path to the directory where LLM output JSON files will be saved.
 *   `--prompt_path` (str, optional): Path to the LLM prompt file. Defaults to `ocr_dataset_builder/prompts/ocr_text_refinement_prompt.md`.
 *   `--frames_per_batch` (int, optional): Number of frames to process in a single call to the LLM. Defaults to `60`.
-*   `--model_name` (str, optional): Name of the Gemini model to use (e.g., `gemini-1.5-pro-latest`, `gemini-2.5-pro-preview-03-25`). Defaults to the value of `DEFAULT_GEMINI_MODEL` environment variable or `gemini-2.5-pro-preview-03-25`.
+*   `--model_name` (str, optional): Name of the Gemini model to use (e.g., `gemini-1.5-pro-latest`, `gemini-2.5-pro-preview-03-25`). Defaults to the value of `LLM_MODEL_NAME` environment variable or `gemini-2.5-pro-preview-03-25`.
 *   `--max_input_dirs` (int, optional): Maximum number of input video directories to process. Useful for testing. Defaults to `None` (process all).
 *   `--max_workers_dirs` (int, optional): Maximum number of worker processes for processing video directories in parallel. Defaults to `cpu_count() // 2`.
 *   `--log_level` (str, optional): Logging level (e.g., `DEBUG`, `INFO`, `WARNING`). Defaults to `INFO`.
@@ -126,7 +126,7 @@ python -m ocr_dataset_builder.llm.llm_text_pipeline run \
 *   `GOOGLE_API_KEY`: Your Google API key for Gemini.
 *   `VERTEX_AI_PROJECT_ID`: Your Google Cloud Project ID for Vertex AI (if using Vertex AI backend).
 *   `VERTEX_AI_LOCATION`: Your Google Cloud Project Location (e.g., `us-central1`) for Vertex AI.
-*   `DEFAULT_GEMINI_MODEL`: Can be set to specify a default model if `--model_name` is not provided.
+*   `LLM_MODEL_NAME`: Can be set to specify a default model if `--model_name` is not provided.
 
 ## Important Considerations
 
