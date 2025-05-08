@@ -10,82 +10,65 @@ This project provides tools to automatically extract frames from YouTube videos,
 *   ⚙️ **Parallel Processing**: Efficiently processes multiple video **directories** in parallel using `concurrent.futures.ProcessPoolExecutor`.
 *   📝 **Metadata Handling**: Copies associated metadata files (e.g., `.info.json`) to the output directory.
 *   📊 **Progress Tracking**: Uses `tqdm` for progress bars during video processing.
+*   🖼️ **LLM Multimodal Analysis**: Processes sequences of video frames with an LLM (e.g., Gemini) for detailed, multi-task visual and OCR analysis (Tasks 1-5 from images).
+*   ✍️ **LLM Text Refinement**: Takes Tesseract OCR text output for frame sequences and uses an LLM (e.g., Gemini 2.5 Pro) to clean the text, convert it to markdown, and generate a contextual summary (Tasks 3-5 from text).
 
 ## 📊 Current Status (as of last update)
 
 *   ✅ **Milestone 1: Setup & Configuration**: Environment setup (Conda, Poetry), API key handling (`.env`), and Vertex AI client verification (`ocr_dataset_builder/examples/example-vertex.py`) are complete.
 *   ✅ **Milestone 2: Frame Extraction Pipeline**:
-    *   `ocr_dataset_builder/video_processing.py` (`extract_frames` function) is implemented.
-    *   `ocr_dataset_builder/frame_pipeline.py` is implemented, enabling parallel processing of video directories, metadata copying, dataset slicing, CLI control, and robust checkpointing.
+    *   `ocr_dataset_builder/video/processing.py` (`extract_frames` function) is implemented.
+    *   `ocr_dataset_builder/video/frame_pipeline.py` is implemented, enabling parallel processing of video directories, metadata copying, dataset slicing, CLI control, and robust checkpointing.
 *   🚧 **Milestone 3: LLM Prompt Adaptation & Initial LLM Processing Code**:
     *   The core `ocr_dataset_builder/prompts/ocr_image_multi_task_prompt.md` has been significantly adapted for video frame sequences.
-    *   Core setup for `ocr_dataset_builder/llm_processing.py` (logging, pathing) is done; Gemini interaction logic and output parsing refinement is ongoing.
+    *   Core setup for `ocr_dataset_builder/llm/processing.py` (logging, pathing) is done; Gemini interaction logic and output parsing refinement is ongoing.
 *   🚧 **Milestone 4: LLM Pipeline Development**:
-    *   `ocr_dataset_builder/llm_pipeline.py` structure established with checkpointing, parallel processing capabilities (for directories and batches), and standardized logging. Further development on result aggregation and output formatting is in progress.
+    *   `ocr_dataset_builder/llm/pipeline.py` structure established with checkpointing, parallel processing capabilities (for directories and batches), and standardized logging. Further development on result aggregation and output formatting is in progress.
 *   🚧 **Milestone 5: Tesseract OCR Integration (Optional/Baseline)**:
-    *   `ocr_dataset_builder/tesseract_processing.py` and `ocr_dataset_builder/tesseract_pipeline.py` have been updated with standardized logging. The pipeline includes checkpointing. Role and integration finalization pending.
-*   ⏳ **Milestone 6: Full Pipeline Integration & Output Generation**: Integrating `frame_pipeline.py` -> (optional `tesseract_pipeline.py`) -> `llm_pipeline.py` and generating final structured output.
+    *   `ocr_dataset_builder/tesseract/processing.py` and `ocr_dataset_builder/tesseract/pipeline.py` have been updated with standardized logging. The pipeline includes checkpointing. Role and integration finalization pending.
+*   ⏳ **Milestone 6: Full Pipeline Integration & Output Generation**: Integrating `video/frame_pipeline.py` -> (optional `tesseract/pipeline.py`) -> `llm/pipeline.py` and generating final structured output.
 *   ✅ **Documentation Foundational Work**: `docs/PIPELINE_GUIDE.md` and `docs/DATA_FORMATS.md` are substantially complete. Core scripts have improved logging and structure. `docs/MILESTONES.md` and `docs/DESIGN.md` have been updated to reflect current progress.
 
 ## 🧩 Core Components
 
-1.  **`ocr_dataset_builder/video_processing.py`**:
+1.  **`ocr_dataset_builder/video/processing.py`**:
     *   Core logic for extracting, resizing, and sampling frames from individual video files.
     *   `extract_frames()`: Main function for per-video frame processing.
     *   `get_human_readable_size()`: Utility for file sizes.
 
-2.  **`ocr_dataset_builder/frame_pipeline.py`**:
-    *   Orchestrates the frame extraction process across an entire dataset of videos using `video_processing.py`.
+2.  **`ocr_dataset_builder/video/frame_pipeline.py`**:
+    *   Orchestrates the frame extraction process across an entire dataset of videos using `ocr_dataset_builder/video/processing.py`.
     *   Handles directory traversal, metadata copying, parallel execution for video directories.
     *   Provides a CLI (`fire`) for dataset processing.
 
 3.  **`ocr_dataset_builder/prompts/ocr_image_multi_task_prompt.md`**:
     *   Detailed multi-task prompt for the Gemini LLM, adapted for video frame sequence analysis (per-frame Tasks 1-4, per-sequence Task 5).
 
-4.  **`ocr_dataset_builder/llm_processing.py`**:
+4.  **`ocr_dataset_builder/llm/processing.py`**:
     *   Handles the direct interaction with the multi-modal LLM (e.g., Gemini via Vertex AI).
     *   Takes a sequence of frames and the prompt to get the structured textual analysis.
     *   Manages API calls, responses, and error handling for a single LLM request.
 
-5.  **`ocr_dataset_builder/llm_pipeline.py`**:
-    *   Orchestrates the process of sending frame sequences (from `frame_pipeline.py` output) to the LLM via `llm_processing.py`.
+5.  **`ocr_dataset_builder/llm/pipeline.py`**:
+    *   Orchestrates the process of sending frame sequences (from `video/frame_pipeline.py` output) to the LLM via `llm/processing.py`.
     *   Manages batching of frame sequences, collecting LLM results, and preparing them for final output generation.
 
-6.  **`ocr_dataset_builder/tesseract_processing.py` (Optional/Baseline)**:
+6.  **`ocr_dataset_builder/tesseract/processing.py` (Optional/Baseline)**:
     *   Performs OCR on individual image frames using the Tesseract OCR engine.
     *   Can be used to generate a baseline OCR text for comparison or as an input to other processes.
 
-7.  **`ocr_dataset_builder/tesseract_pipeline.py` (Optional/Baseline)**:
-    *   Orchestrates the application of Tesseract OCR (via `tesseract_processing.py`) over a dataset of extracted frames.
+7.  **`ocr_dataset_builder/tesseract/pipeline.py` (Optional/Baseline)**:
+    *   Orchestrates the application of Tesseract OCR (via `tesseract/processing.py`) over a dataset of extracted frames.
+    *   Expected to output individual `.txt` files per frame for consumption by the Text LLM Refinement Pipeline.
 
-## 📂 Project Structure
+8.  **`ocr_dataset_builder/prompts/ocr_text_refinement_prompt.md` (New)**:
+    *   Specialized prompt for guiding an LLM to refine sequences of Tesseract OCR text, focusing on text cleaning (Task 3), markdown conversion (Task 4), and summarization (Task 5).
 
-```
-ocr-dataset-builder/
-├── .env.example             # Example for environment variables (e.g., API keys)
-├── .gitignore
-├── Dockerfile               # For containerized deployment (future)
-├── MILESTONES.md            # Project milestones
-├── README.md                # This file
-├── docs/
-│   └── DESIGN.md            # Design choices and architecture
-├── install-conda-env.sh     # Script to create Conda environment
-├── ocr_dataset_builder/
-│   ├── __init__.py
-│   ├── examples/            # Example scripts
-│   │   └── example-vertex.py # Example for Vertex AI API usage
-│   ├── prompts/
-│   │   └── ocr_image_multi_task_prompt.md # LLM prompt
-│   ├── frame_pipeline.py    # Orchestrates frame extraction
-│   ├── video_processing.py   # Single video frame extraction
-│   ├── llm_pipeline.py       # Orchestrates LLM analysis
-│   ├── llm_processing.py     # Single LLM interaction
-│   ├── tesseract_pipeline.py # Orchestrates Tesseract OCR (optional)
-│   └── tesseract_processing.py # Single frame Tesseract OCR (optional)
-├── poetry.lock
-├── pyproject.toml           # Project metadata and dependencies (Poetry)
-└── scripts/                 # Utility scripts (if any)
-```
+9.  **`ocr_dataset_builder/llm/llm_text_processing.py` (New - Planned)**:
+    *   Handles direct interaction with an LLM for text-based refinement tasks using the `ocr_dataset_builder/prompts/ocr_text_refinement_prompt.md`.
+
+10. **`ocr_dataset_builder/llm/llm_text_pipeline.py` (New - Planned)**:
+    *   Orchestrates the process of sending Tesseract OCR text sequences (e.g., from `tesseract/pipeline.py` output) to an LLM via `llm/llm_text_processing.py` for refinement.
 
 ## 🛠️ Setup
 
@@ -127,16 +110,16 @@ This key will be used by `scripts/example-vertex.py` and the future LLM processi
 
 ## 🚀 Usage
 
-This project involves multiple pipelines. For detailed CLI arguments and usage, please refer to `docs/PIPELINE_GUIDE.md`.
+This project involves multiple pipelines. For detailed CLI arguments and usage, please refer to `docs/PIPELINE_GUIDE.md`, `docs/TEXT_LLM_PIPELINE_GUIDE.md`.
 
 ### 1. Frame Extraction
 
-Use `ocr_dataset_builder/frame_pipeline.py` to process a dataset of videos and extract frames.
+Use `ocr_dataset_builder/video/frame_pipeline.py` to process a dataset of videos and extract frames.
 
 **Example:**
 
 ```bash
-python ocr_dataset_builder/frame_pipeline.py process_videos \
+python -m ocr_dataset_builder.video.frame_pipeline process_videos \
     --dataset_path "/path/to/your/video_dataset" \
     --output_path "./output/extracted_frames" \
     --target_fps 1
@@ -144,50 +127,40 @@ python ocr_dataset_builder/frame_pipeline.py process_videos \
 
 ### 2. Tesseract OCR (Optional Baseline)
 
-If baseline OCR is needed, `ocr_dataset_builder/tesseract_pipeline.py` can be used on the output of the frame extraction.
+If baseline OCR is needed, `ocr_dataset_builder/tesseract/pipeline.py` can be used on the output of the frame extraction.
 
 **Example:**
 ```bash
-python ocr_dataset_builder/tesseract_pipeline.py \
+python -m ocr_dataset_builder.tesseract.pipeline run \
     --input_dir "./output/extracted_frames" \
     --output_dir "./output/tesseract_ocr_results"
 ```
 
-### 3. LLM-based Analysis
+### 3. LLM-based Multimodal Analysis
 
-Once frames are extracted, `ocr_dataset_builder/llm_pipeline.py` will be used to process sequences of these frames with the Gemini LLM.
+Once frames are extracted, `ocr_dataset_builder/llm/pipeline.py` can be used to process sequences of these frames with the Gemini LLM.
 
-**Example:**
+**Example (Multimodal Image Analysis):**
 ```bash
-python ocr_dataset_builder/llm_pipeline.py run \
+python -m ocr_dataset_builder.llm.pipeline run \
     --input_dir "./output/extracted_frames" \
     --output_dir "./output/llm_analysis_results" \
     --batch_size 30
 ```
 
+### 4. LLM-based Text Refinement (New - Planned)
+
+After running the Tesseract OCR pipeline (which should output `.txt` files per frame), `ocr_dataset_builder/llm/llm_text_pipeline.py` can be used to refine these texts.
+
+**Example (Text Refinement):**
+
+```bash
+python -m ocr_dataset_builder.llm.llm_text_pipeline run \
+    --input_dir "./output/tesseract_text_output" \
+    --output_dir "./output/llm_text_refined_output" \
+    --frames_per_batch 60
+```
+
 ## 🧑‍💻 Development
 
-This project uses `ruff` for linting and `black` for formatting, managed via `poethepoet`.
-
-*   **Format code:**
-    ```bash
-    poe format
-    ```
-*   **Lint code:**
-    ```bash
-    poe lint
-    ```
-    Or, to auto-fix linting issues where possible:
-    ```bash
-    poe lint --fix
-    ```
-
-## Next Steps
-
-*   **Finalize `llm_processing.py`**: Ensure robust interaction with the Gemini API, including error handling and reliable parsing of the structured output based on `ocr_image_multi_task_prompt.md`.
-*   **Complete `llm_pipeline.py` Functionality**: Implement final LLM result aggregation and saving in the defined structured output format (e.g., JSON files per batch).
-*   **Integrate Pipelines**: Ensure smooth data flow: `frame_pipeline.py` output feeds into `llm_pipeline.py` (and optionally `tesseract_pipeline.py` if used as a distinct step).
-*   **Refine Tesseract Pipeline (if pursued)**: Solidify its role and complete any remaining integration details.
-*   **Testing & Iteration**: Thoroughly test each pipeline and the integrated flow with various scenarios and data.
-*   **Finalize Core Documentation**: Review and polish `README.md`, `docs/DESIGN.md`, `docs/MILESTONES.md`, `docs/PIPELINE_GUIDE.md`, and `docs/DATA_FORMATS.md`.
-*   **Expand Documentation**: Develop other planned documents (`docs/PROMPT_ENGINEERING_GUIDE.md`, `docs/TROUBLESHOOTING.md`, etc.) as the project matures.
+This project uses `ruff` for linting and `black`

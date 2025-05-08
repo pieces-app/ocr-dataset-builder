@@ -4,25 +4,25 @@ This guide provides detailed instructions on how to run the various pipelines in
 
 ## Table of Contents
 
-1.  [Frame Extraction Pipeline (`ocr_dataset_builder/frame_pipeline.py`)](#1-frame-extraction-pipeline)
-2.  [Tesseract OCR Pipeline (`ocr_dataset_builder/tesseract_pipeline.py`)](#2-tesseract-ocr-pipeline)
-3.  [LLM Analysis Pipeline (`ocr_dataset_builder/llm_pipeline.py`)](#3-llm-analysis-pipeline)
+1.  [Frame Extraction Pipeline (`ocr_dataset_builder/video/frame_pipeline.py`)](#1-frame-extraction-pipeline)
+2.  [Tesseract OCR Pipeline (`ocr_dataset_builder/tesseract/pipeline.py`)](#2-tesseract-ocr-pipeline)
+3.  [LLM Multimodal Analysis Pipeline (`ocr_dataset_builder/llm/pipeline.py`)](#3-llm-multimodal-analysis-pipeline)
 
 ---
 
 ## 1. Frame Extraction Pipeline
 
-**Script:** `ocr_dataset_builder/frame_pipeline.py`
+**Script:** `ocr_dataset_builder/video/frame_pipeline.py`
 
 This pipeline is responsible for processing raw video files from a dataset, extracting frames at a specified rate, resizing them, sampling a maximum number per video, and saving them to an output directory. It also copies associated metadata files.
 
-### Command
+### Purpose
 
-The pipeline is invoked using the `process_videos` command:
+The purpose of this pipeline is to extract frames from video files and save them to an output directory.
 
-```bash
-python ocr_dataset_builder/frame_pipeline.py process_videos [ARGUMENTS]
-```
+### CLI Usage
+
+Run the pipeline using `python -m ocr_dataset_builder.video.frame_pipeline process_videos ...`
 
 ### Arguments
 
@@ -54,11 +54,11 @@ python ocr_dataset_builder/frame_pipeline.py process_videos [ARGUMENTS]
     *   Description: Name for the checkpoint log file that tracks successfully processed video directories. Stored in the `output_path`.
     *   Default: `.processed_video_dirs.log`
 
-### Example Usage
+### Example
 
 ```bash
-python ocr_dataset_builder/frame_pipeline.py process_videos \
-    --dataset_path "/path/to/your/video_dataset" \
+python -m ocr_dataset_builder.video.frame_pipeline process_videos \
+    --dataset_path "/path/to/video_dataset" \
     --output_path "./output/extracted_frames" \
     --target_fps 1 \
     --max_dimension 768 \
@@ -77,18 +77,17 @@ python ocr_dataset_builder/frame_pipeline.py process_videos \
 
 ## 2. Tesseract OCR Pipeline
 
-**Script:** `ocr_dataset_builder/tesseract_pipeline.py`
+**Script:** `ocr_dataset_builder/tesseract/pipeline.py`
 
 This pipeline (optional) processes directories of extracted frames (typically the output of the Frame Extraction Pipeline) using the Tesseract OCR engine. It generates JSON files containing the OCR text for each frame within a directory.
 
-### Command
+### Purpose
 
-The pipeline is invoked using the `run_tesseract_pipeline` command (or the default `fire` command if not explicitly named in a CLI class).
-*(Self-correction: The script uses `fire.Fire(run_tesseract_pipeline)`, so the command is directly `run_tesseract_pipeline` or simply executing the script with arguments)*
+The purpose of this pipeline is to process extracted frames using the Tesseract OCR engine and generate JSON files containing the OCR text for each frame.
 
-```bash
-python ocr_dataset_builder/tesseract_pipeline.py [ARGUMENTS]
-```
+### CLI Usage
+
+Run the pipeline using `python -m ocr_dataset_builder.tesseract.pipeline run ...`
 
 ### Arguments
 
@@ -114,12 +113,12 @@ python ocr_dataset_builder/tesseract_pipeline.py [ARGUMENTS]
     *   Description: Name for the checkpoint log file that tracks successfully processed frame directories. Stored in the `output_dir`.
     *   Default: `.processed_tesseract_dirs.log`
 
-### Example Usage
+### Example
 
 ```bash
-python ocr_dataset_builder/tesseract_pipeline.py \
+python -m ocr_dataset_builder.tesseract.pipeline run \
     --input_dir "./output/extracted_frames" \
-    --output_dir "./output/tesseract_ocr_results" \
+    --output_dir "./output/tesseract_output" \
     --language "eng" \
     --max_workers 4
 ```
@@ -131,19 +130,19 @@ python ocr_dataset_builder/tesseract_pipeline.py \
 
 ---
 
-## 3. LLM Analysis Pipeline
+## 3. LLM Multimodal Analysis Pipeline
 
-**Script:** `ocr_dataset_builder/llm_pipeline.py`
+**Script:** `ocr_dataset_builder/llm/pipeline.py`
 
 This pipeline processes sequences of extracted frames using a multi-modal Large Language Model (LLM) like Gemini, based on a detailed prompt. It generates structured analytical data for each frame sequence.
 
-### Command
+### Purpose
 
-The pipeline is invoked using the `run` command of the `LLMPipelineCLI` class:
+The purpose of this pipeline is to process extracted frames using a multi-modal Large Language Model (LLM) and generate structured analytical data for each frame sequence.
 
-```bash
-python ocr_dataset_builder/llm_pipeline.py run [ARGUMENTS]
-```
+### CLI Usage
+
+Run the pipeline using `python -m ocr_dataset_builder.llm.pipeline run ...`
 
 ### Arguments
 
@@ -178,10 +177,10 @@ python ocr_dataset_builder/llm_pipeline.py run [ARGUMENTS]
     *   Description: Name for the checkpoint log file that tracks successfully processed video directories. Stored in the `output_dir`.
     *   Default: `.processed_llm_video_dirs.log`
 
-### Example Usage
+### Example
 
 ```bash
-python ocr_dataset_builder/llm_pipeline.py run \
+python -m ocr_dataset_builder.llm.pipeline run \
     --input_dir "./output/extracted_frames" \
     --output_dir "./output/llm_analysis_results" \
     --batch_size 30 \

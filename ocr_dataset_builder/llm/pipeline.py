@@ -17,7 +17,7 @@ from tqdm import tqdm
 
 
 # Import necessary functions from the other modules
-from ocr_dataset_builder.llm_processing import (
+from .processing import (
     initialize_gemini_client,
     load_prompt,
     parse_llm_response,
@@ -729,4 +729,4 @@ class LLMPipelineCLI:
         )
 
 if __name__ == "__main__":
-    fire.Fire(LLMPipelineCLI)
+    fire.Fire(LLMPipelineCLI) 

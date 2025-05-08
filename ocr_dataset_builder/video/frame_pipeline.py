@@ -13,7 +13,7 @@ from rich.logging import RichHandler  # Added for rich logging
 from tqdm import tqdm
 
 
-from ocr_dataset_builder.video_processing import extract_frames
+from .processing import extract_frames
 
 # Configure basic logging with RichHandler
 logging.basicConfig(
@@ -587,4 +587,4 @@ class PipelineCLI:
 
 
 if __name__ == "__main__":
-    fire.Fire(PipelineCLI)
+    fire.Fire(PipelineCLI) 

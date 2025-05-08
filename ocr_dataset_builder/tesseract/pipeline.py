@@ -10,7 +10,7 @@ from rich.logging import RichHandler  # Added for rich logging
 from tqdm import tqdm
 
 # Local package imports (assuming package is installed/dev mode)
-from ocr_dataset_builder.tesseract_processing import (
+from .processing import (
     check_tesseract_install,
     process_image_with_tesseract,
 )
@@ -249,58 +249,52 @@ def _perform_tesseract_processing_pass(
                 _process_tesseract_directory,
                 abs_path,
                 rel_path,
-                output_root, # Pass output_root correctly
+                output_root,
                 language,
             )
             futures.append(future)
 
-        progress_bar = tqdm(
+        dir_progress_desc = "Processing Dirs (Tesseract Pass)"
+        for future in tqdm(
             concurrent.futures.as_completed(futures),
             total=target_count_this_pass,
-            unit="dir",
-            desc="Processing Tesseract (Pass)", # Updated description
+            desc=dir_progress_desc,
             ncols=100,
-        )
-
-        for future in progress_bar:
+            leave=True # Keep bar after completion for pass summary
+        ):
             try:
                 returned_relative_path, frame_count_or_none, status = future.result()
-
-                if status.startswith("Success"):
-                    pass_successful_dir_count += 1
-                    if frame_count_or_none is not None:
-                        pass_total_frames_processed += frame_count_or_none
+                if frame_count_or_none is not None:
+                    pass_total_frames_processed += frame_count_or_none
+                
+                if status.startswith("Success") or status.startswith("No frame_*.png") : # Treat "No frames" as a kind of success for checkpointing
+                    pass_successful_dir_count +=1
                     try:
-                        with open(checkpoint_path, "a") as cp_file:
-                            cp_file.write(f"{returned_relative_path}\\n")
-                        logging.debug(f"Checkpointed (Tesseract): {returned_relative_path}")
+                        with open(checkpoint_path, "a") as cp_f:
+                            cp_f.write(f"{returned_relative_path}\n")
+                        logging.debug(f"Tesseract Checkpointed: {returned_relative_path}")
                     except Exception as cp_e:
-                        logging.error(
-                            f"Failed to write to Tesseract checkpoint {checkpoint_path} for {returned_relative_path}: {cp_e}"
-                        )
-                elif "No frame_" in status: # Handles "No frame_*.png or frame_*.jpg files found"
-                    # This is not a failure of Tesseract itself, but no work to do.
-                    # We still want to checkpoint it so we don't retry indefinitely.
-                    logging.warning(f"Directory {returned_relative_path} skipped: {status}. Checkpointing to avoid re-scan.")
-                    try:
-                        with open(checkpoint_path, "a") as cp_file:
-                            cp_file.write(f"{returned_relative_path}\\n")
-                    except Exception as cp_e:
-                        logging.error(f"Failed to checkpoint skipped dir {returned_relative_path}: {cp_e}")
-                else: # Other errors
+                        logging.error(f"Failed to write to Tesseract checkpoint {checkpoint_path} for {returned_relative_path}: {cp_e}")
+                else:
                     pass_failed_dir_count += 1
                     logging.warning(
-                        f"Directory (Tesseract) {returned_relative_path} failed with status: {status}"
+                        f"Tesseract processing for directory {returned_relative_path} failed with status: {status}"
                     )
             except concurrent.futures.process.BrokenProcessPool as bpp_exc:
-                pass_failed_dir_count +=1
-                logging.error(f"A Tesseract worker process died unexpectedly (BrokenProcessPool): {bpp_exc}", exc_info=True)
+                # Need to retrieve which future (and thus which path) caused this if possible
+                # This is complex; for now, log generally and mark one failure.
+                # To get the specific path, you'd need to map futures to paths *before* as_completed.
+                pass_failed_dir_count +=1 # The directory processing failed
+                logging.error(f"A Tesseract worker process died (BrokenProcessPool): {bpp_exc}. This directory will be marked as failed.", exc_info=True)
+
             except Exception as exc:
                 pass_failed_dir_count += 1
+                # Again, identifying the specific directory is tricky here without prior mapping
                 logging.error(
-                    f"A Tesseract task in the executor failed: {exc}", exc_info=True
+                    f"An unexpected error occurred while processing a Tesseract directory future: {exc}",
+                    exc_info=True
                 )
-    
+
     return pass_attempted_count, pass_successful_dir_count, pass_failed_dir_count, pass_total_frames_processed
 
 
@@ -316,29 +310,15 @@ def run_tesseract_pipeline(
     watch_interval_seconds: int = 300,
 ):
     """
-    Runs Tesseract OCR processing pipeline on extracted frame directories.
+    Runs the Tesseract OCR pipeline on directories of extracted frames.
     Can run once or in daemon mode to continuously monitor for new directories.
-
-    Args:
-        input_dir: Root directory containing extracted frame subdirectories.
-        output_dir: Root directory to save the Tesseract OCR results & checkpoint.
-        language: Tesseract language code (e.g., 'eng').
-        max_workers: Max parallel processes for directories. Default: CPU count.
-        start_index: 0-based index of the first frame directory to process (after checkpoint).
-                     Applies to single run or the first pass of daemon mode.
-        end_index: 0-based index of the directory *after* the last one (after checkpoint).
-                   Applies to single run or the first pass of daemon mode.
-        checkpoint_file_name: Log file for processed directories.
-        daemon_mode: If True, run continuously, scanning for new directories.
-        watch_interval_seconds: Interval for scans in daemon mode.
     """
-    from rich import print # Keep import here
+    from rich import print # Local import for this main orchestrator
 
-    print("--- Starting Tesseract OCR Pipeline --- ")
+    print("--- Initializing Tesseract OCR Pipeline --- ")
     if not check_tesseract_install():
         print(
-            "[red]Tesseract check failed. Please install Tesseract OCR "
-            "and ensure it's in PATH.[/red]"
+            "[bold red]Tesseract installation check failed. Please ensure Tesseract is installed and accessible.[/bold red]"
         )
         return
     print("[green]Tesseract installation check successful.[/green]")
@@ -347,31 +327,34 @@ def run_tesseract_pipeline(
     output_root = Path(output_dir).resolve()
     output_root.mkdir(parents=True, exist_ok=True)
 
-    logging.info(f"Input Frame Directory: {input_root}")
-    logging.info(f"Output JSON Directory: {output_root}")
+    if not input_root.is_dir():
+        print(f"[red]Input directory for Tesseract not found: {input_root}[/red]")
+        return
+
+    logging.info(f"Input Frame Directory (for Tesseract): {input_root}")
+    logging.info(f"Output Tesseract JSON Directory: {output_root}")
     checkpoint_full_path = output_root / checkpoint_file_name
-    logging.info(f"Checkpoint file path: {str(checkpoint_full_path)}")
+    logging.info(f"Tesseract Checkpoint file path: {str(checkpoint_full_path)}")
     logging.info(f"Tesseract Language: {language}")
-    logging.info(
-        f"Max Workers (Dirs): {max_workers if max_workers else os.cpu_count()}"
-    )
+    logging.info(f"Max Workers (Tesseract Dirs): {max_workers if max_workers else 'Default (CPU Count)'}")
 
     if daemon_mode:
         logging.info(
-            f"[DAEMON MODE] Activated. Watch interval: {watch_interval_seconds}s. "
-            f"Initial slice: start={start_index}, end={end_index}. "
-            "Subsequent passes will process all new."
+            f"[DAEMON MODE] Tesseract Pipeline activated. Watch interval: {watch_interval_seconds}s. "
+            f"Initial slice for first pass: start_index={start_index}, end_index={end_index}. "
+            "Subsequent passes will process all new directories."
         )
     else:
-        logging.info(f"Single run mode. Slice: start={start_index}, end={end_index}")
+        logging.info(f"Single run mode for Tesseract. Slice to consider: start_index={start_index}, end_index={end_index}")
 
     run_iteration = 0
-    overall_attempted_count = 0
-    overall_successful_dir_count = 0
-    overall_failed_dir_count = 0
+    overall_dirs_attempted = 0
+    overall_dirs_successful = 0
+    overall_dirs_failed = 0
     overall_total_frames_processed = 0
     
     first_pass_daemon = True
+    pipeline_start_time = time.time()
 
     try:
         while True:
@@ -387,10 +370,10 @@ def run_tesseract_pipeline(
                     current_start_idx_for_pass = start_index
                     current_end_idx_for_pass = end_index
                     first_pass_daemon = False
-                else:
-                    current_start_idx_for_pass = 0 # Process all new
-                    current_end_idx_for_pass = None
-            else: # Single run
+                else: # Subsequent daemon passes process all new
+                    current_start_idx_for_pass = 0
+                    current_end_idx_for_pass = None # Process all available
+            else: # Single run mode
                 current_start_idx_for_pass = start_index
                 current_end_idx_for_pass = end_index
             
@@ -407,38 +390,39 @@ def run_tesseract_pipeline(
             pass_duration = time.time() - pass_start_time
 
             logging.info(f"--- Tesseract Pass #{run_iteration} Summary ---")
-            logging.info(f"Directories targeted in this pass: {pass_attempted}")
-            logging.info(f"Successfully processed (dirs) in this pass: {pass_successful}")
-            logging.info(f"Failed (dirs) in this pass: {pass_failed}")
-            logging.info(f"Total frames OCR'd in this pass: {pass_frames}")
-            logging.info(f"Pass #{run_iteration} duration: {pass_duration:.2f} seconds")
+            logging.info(f"Frame Dirs targeted in this Tesseract pass: {pass_attempted}")
+            logging.info(f"Successfully processed (dirs) in this Tesseract pass: {pass_successful}")
+            logging.info(f"Failed (dirs) in this Tesseract pass: {pass_failed}")
+            logging.info(f"Total frames submitted to Tesseract in this pass: {pass_frames}")
+            logging.info(f"Tesseract Pass #{run_iteration} duration: {pass_duration:.2f} seconds")
 
-            overall_attempted_count += pass_attempted
-            overall_successful_dir_count += pass_successful
-            overall_failed_dir_count += pass_failed
+            overall_dirs_attempted += pass_attempted
+            overall_dirs_successful += pass_successful
+            overall_dirs_failed += pass_failed
             overall_total_frames_processed += pass_frames
             
             if not daemon_mode:
-                break
+                break # Exit loop if not in daemon mode
 
             logging.info(f"[DAEMON MODE] Next Tesseract scan in {watch_interval_seconds} seconds. (Ctrl+C to stop)")
             time.sleep(watch_interval_seconds)
             
     except KeyboardInterrupt:
-        logging.info("[bold red]Tesseract KeyboardInterrupt. Shutting down gracefully...[/bold red]")
+        print("[bold red]Tesseract Pipeline KeyboardInterrupt. Shutting down gracefully...[/bold red]")
     finally:
-        logging.info("--- Overall Tesseract Processing Summary ---")
+        pipeline_duration = time.time() - pipeline_start_time
+        print("--- Overall Tesseract Processing Summary --- ")
         if daemon_mode:
-            logging.info(f"Total Tesseract passes executed: {run_iteration}")
-        logging.info(f"Total directories targeted: {overall_attempted_count}")
-        logging.info(f"Total successfully processed (dirs): {overall_successful_dir_count}")
-        logging.info(f"Total failed (dirs): {overall_failed_dir_count}")
-        logging.info(f"Total frames OCR'd: {overall_total_frames_processed}")
-        logging.info(f"See {checkpoint_full_path} for completed Tesseract directories.")
-
+            print(f"Total Tesseract passes executed: {run_iteration}")
+        print(f"Total Frame Directories Targeted: {overall_dirs_attempted}")
+        print(f"Total Successfully Processed Dirs: {overall_dirs_successful}")
+        print(f"Total Failed Dirs: {overall_dirs_failed}")
+        print(f"Total Frames Submitted for OCR: {overall_total_frames_processed}")
+        print(f"Total Tesseract Pipeline Duration: {pipeline_duration:.2f} seconds")
+        print(f"See {checkpoint_full_path} for completed Tesseract input directories.")
 
 class TesseractPipelineCLI:
-    """CLI for the Tesseract OCR Processing Pipeline."""
+    """CLI for the Tesseract OCR Pipeline."""
 
     def run(
         self,
@@ -453,19 +437,26 @@ class TesseractPipelineCLI:
         watch_interval_seconds: int = 300,
     ):
         """
-        Runs Tesseract OCR on frame directories.
+        Runs the Tesseract OCR pipeline on extracted frame directories.
 
         Args:
-            input_dir: Directory with frame subdirectories.
-            output_dir: Directory to save Tesseract JSON results.
-            language: Tesseract language code.
-            max_workers: Max parallel directory processing.
-            start_index: Start index for processing (after checkpoint).
-            end_index: End index for processing (after checkpoint).
-            checkpoint_log: Name for the checkpoint file in output_dir.
-            daemon_mode: Run continuously, watching for new directories.
-            watch_interval_seconds: Scan interval in daemon mode.
+            input_dir: Root directory of extracted frames (from frame_pipeline.py).
+            output_dir: Root directory to save Tesseract OCR JSON outputs.
+            language: Language code for Tesseract (e.g., 'eng').
+            max_workers: Max number of parallel directory processing. Defaults to os.cpu_count().
+            start_index: 0-based index of the first directory to process (after checkpointing).
+                         Applies to single run or the first pass of daemon mode.
+            end_index: 0-based index *after* the last directory to process (after checkpointing).
+                       Applies to single run or the first pass of daemon mode.
+            checkpoint_log: Name for the checkpoint file within the output_dir.
+            daemon_mode: If True, run continuously, scanning for new directories at intervals.
+            watch_interval_seconds: Interval in seconds for daemon mode scans.
         """
+        # Simple validation for worker count to avoid issues with ProcessPoolExecutor
+        if max_workers is not None and max_workers < 1:
+            logging.warning("max_workers for Tesseract cannot be less than 1. Setting to 1.")
+            max_workers = 1
+
         run_tesseract_pipeline(
             input_dir=input_dir,
             output_dir=output_dir,
@@ -473,10 +464,10 @@ class TesseractPipelineCLI:
             max_workers=max_workers,
             start_index=start_index,
             end_index=end_index,
-            checkpoint_file_name=checkpoint_log, # Pass as checkpoint_file_name
+            checkpoint_file_name=checkpoint_log, # Pass CLI's checkpoint_log as checkpoint_file_name
             daemon_mode=daemon_mode,
             watch_interval_seconds=watch_interval_seconds,
         )
 
 if __name__ == "__main__":
-    fire.Fire(TesseractPipelineCLI)
+    fire.Fire(TesseractPipelineCLI) 

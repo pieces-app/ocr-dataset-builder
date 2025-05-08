@@ -1,5 +1,5 @@
 import re
-
+from rich import print
 def clean_tesseract_ocr(text: str) -> str:
     """
     Performs basic cleaning of raw Tesseract OCR output.

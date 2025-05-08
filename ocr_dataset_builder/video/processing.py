@@ -248,26 +248,24 @@ def extract_frames(
 
     if not extracted_frame_paths:
         logging.warning(
-            f"No frames saved for {video_path_obj.name}. Output: {output_dir}"
+            f"No frames were ultimately saved for {video_path_obj.name}. "
+            "This might be due to aggressive sampling, video issues, or filtering criteria."
         )
 
     return extracted_frame_paths
 
 
 def get_human_readable_size(size_bytes: int) -> str:
-    """💾 Converts a size in bytes to a human-readable string format.
-
-    Supports B, KB, MB, GB, TB.
+    """Converts a size in bytes to a human-readable string (KB, MB, GB).
 
     Args:
         size_bytes (int): The size in bytes.
 
     Returns:
-        str: A string representing the size in a human-readable unit
-             (e.g., "1.23 MB"). Returns "0 B" if input is non-positive.
+        str: A human-readable string representation of the size.
     """
-    if size_bytes <= 0:
-        return "0 B"
+    if size_bytes == 0:
+        return "0B"
     size_name = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
     i = int(math.floor(math.log(size_bytes, 1024)))
     p = math.pow(1024, i)
@@ -275,59 +273,76 @@ def get_human_readable_size(size_bytes: int) -> str:
     return f"{s} {size_name[i]}"
 
 
-# Example usage - Now includes max_frames_per_video
+# --- Example Usage (for direct script execution) ---
 if __name__ == "__main__":
-    test_video_path = (
-        "/mnt/nvme-fast0/datasets/pieces/pieces-ocr-v-0-1-0/"
-        "Databases_ Index optimization with dates [I0qXl321kjE]/"
-        "Databases： Index optimization with dates [I0qXl321kjE].mp4"
-    )
+    # Configure logging specifically for the example if needed, or rely on global
+    # logging.basicConfig(level=logging.DEBUG) # Example: more verbose for testing
 
-    test_output_dir = "./temp_test_frames_sampled_png"
-    test_max_dimension = 768
-    test_max_frames = 15  # Example: Sample down to 15 frames
+    print("[bold green]Running Video Processing Example...[/bold green]")
 
-    print("--- Running Frame Extraction Test (Resize + Sample) ---")
-    print(f"--- Input Video: {test_video_path}")
-    print(f"--- Output Dir:  {test_output_dir}")
-    print(
-        f"--- Max Dimension: {test_max_dimension if test_max_dimension else 'Original'}"
-    )
-    print(
-        f"--- Max Frames/Vid: {test_max_frames if test_max_frames else 'All'}"
-    )
-    print("--- Ensure input video path is correct before proceeding. ---")
+    # Create dummy video file for testing
+    test_video_dir = Path("./temp_video_test_data")
+    test_video_dir.mkdir(parents=True, exist_ok=True)
+    dummy_video_path = test_video_dir / "dummy_video.mp4"
 
-    video_file = Path(test_video_path)
-    if video_file.is_file():
-        video_size_bytes = video_file.stat().st_size
-        video_size_readable = get_human_readable_size(video_size_bytes)
-        print(f"--- Original Video Size: {video_size_readable}")
-
-        extracted_paths = extract_frames(
-            str(video_file),
-            test_output_dir,
-            target_fps=1,
-            max_dimension=test_max_dimension,
-            max_frames_per_video=test_max_frames,  # Pass sampling limit
+    # Create a small dummy MP4 file using OpenCV if it doesn't exist
+    if not dummy_video_path.exists():
+        print(f"Creating dummy video: {dummy_video_path}")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        # Dimensions, FPS, Color
+        out = cv2.VideoWriter(
+            str(dummy_video_path), fourcc, 5, (100, 100), True
         )
-        if extracted_paths:
-            output_dir_path = Path(test_output_dir)
-            total_frames_size_bytes = sum(
-                f.stat().st_size
-                for f in output_dir_path.glob("**/*")
-                if f.is_file()
-            )
-            frames_size_readable = get_human_readable_size(
-                total_frames_size_bytes
-            )
-
-            print(
-                f"\n✅ Saved {len(extracted_paths)} frames to {output_dir_path.name}"
-            )
-            print(f"--- Total frames size: {frames_size_readable}")
-        else:
-            print("\n❌ Frame extraction/saving failed or produced no frames.")
+        for _ in range(25):  # 5 seconds of video at 5 FPS
+            frame = cv2.UMat(100, 100, cv2.CV_8UC3)
+            frame[:] = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)) # Random color
+            out.write(frame)
+        out.release()
+        print(f"Dummy video created: {dummy_video_path}")
     else:
-        print(f"\n❌ Test video file not found: {test_video_path}")
-        print(f"   Please update the 'test_video_path' variable in {__file__}")
+        print(f"Using existing dummy video: {dummy_video_path}")
+
+    # --- Test Case 1: Basic Extraction (1 FPS, Resize) ---
+    print("\n[bold blue]--- Test Case 1: Basic Extraction (1 FPS, Resize) ---[/bold blue]")
+    output_dir_test1 = test_video_dir / "test1_frames"
+    extracted_1 = extract_frames(
+        str(dummy_video_path),
+        str(output_dir_test1),
+        target_fps=1,
+        max_dimension=50,
+    )
+    print(f"Test 1 Extracted paths: {extracted_1}")
+    print(f"Test 1 Frames saved in: {output_dir_test1}")
+
+    # --- Test Case 2: Max Frames Sampling ---
+    print("\n[bold blue]--- Test Case 2: Max Frames Sampling ---[/bold blue]")
+    output_dir_test2 = test_video_dir / "test2_frames_sampled"
+    extracted_2 = extract_frames(
+        str(dummy_video_path),
+        str(output_dir_test2),
+        target_fps=5,  # Extract all frames initially
+        max_dimension=80,
+        max_frames_per_video=3,  # Sample down to 3
+    )
+    print(f"Test 2 Extracted paths: {extracted_2}")
+    print(f"Test 2 Frames saved in: {output_dir_test2}")
+    assert len(extracted_2) <= 3, "Sampling failed to limit frame count"
+
+    # --- Test Case 3: No Resizing, All Frames (low FPS video) ---
+    print(
+        "\n[bold blue]--- Test Case 3: No Resizing, All Frames (matching target_fps to native) ---[/bold blue]"
+    )
+    output_dir_test3 = test_video_dir / "test3_frames_no_resize_all"
+    extracted_3 = extract_frames(
+        str(dummy_video_path),
+        str(output_dir_test3),
+        target_fps=5,  # Match native FPS of dummy video
+        max_dimension=None,  # No resize
+        max_frames_per_video=None, # No sampling
+    )
+    print(f"Test 3 Extracted paths: {extracted_3}")
+    print(f"Test 3 Frames saved in: {output_dir_test3}")
+
+    print("\n[bold green]Video Processing Example Finished.[/bold green]")
+    print(f"Dummy video and test outputs are in: {test_video_dir.resolve()}")
+    # Consider cleaning up: shutil.rmtree(test_video_dir) 

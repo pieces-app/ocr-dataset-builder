@@ -145,4 +145,4 @@ if __name__ == "__main__":
         print(
             "Please install Tesseract OCR and ensure it's in your "
             "system PATH or configure Pytesseract."
-        )
+        ) 

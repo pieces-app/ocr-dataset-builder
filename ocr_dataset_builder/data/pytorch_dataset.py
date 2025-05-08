@@ -13,7 +13,7 @@ from torchvision import transforms # For example transform
 from rich.logging import RichHandler
 
 # Import the new augmentation functions
-from ocr_dataset_builder.ocr_augmentations import (
+from .ocr_augmentations import (
     setting_slight_stutter,
     setting_gappy_and_fragmented,
     setting_overly_eager_diff,
@@ -27,7 +27,7 @@ from ocr_dataset_builder.ocr_augmentations import (
 )
 
 # Import the new cleaning function
-from ocr_dataset_builder.ocr_utils import clean_tesseract_ocr
+from ocr_dataset_builder.tesseract.ocr_utils import clean_tesseract_ocr
 
 # Configure basic logging with RichHandler
 logging.basicConfig(
