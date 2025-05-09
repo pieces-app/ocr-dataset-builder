@@ -330,10 +330,12 @@ def run_text_llm_pipeline(
             with open(checkpoint_path, "r") as f:
                 for line in f:
                     processed_dirs_from_checkpoint.add(line.strip())
-            logging.info(f"Loaded {len(processed_dirs_from_checkpoint)} processed directories from checkpoint.")
+            logging.info(f"Loaded {len(processed_dirs_from_checkpoint)} processed directory paths from checkpoint: {checkpoint_path}")
         except Exception as e:
             logging.error(f"Could not read checkpoint file {checkpoint_path}: {e}. Processing all (or as per slice).", exc_info=True)
             processed_dirs_from_checkpoint.clear()
+    else:
+        logging.info(f"No checkpoint file found at {checkpoint_path}. Will process all relevant directories.")
 
     # --- Discover Input Directories --- #
     all_potential_dirs_abs = sorted([d for d in input_root.iterdir() if d.is_dir()])
@@ -343,10 +345,27 @@ def run_text_llm_pipeline(
     # --- Filter Processed/Stale Dirs ---
     valid_processed_paths = {p for p in processed_dirs_from_checkpoint if (input_root / p).is_dir()}
     if len(valid_processed_paths) < len(processed_dirs_from_checkpoint):
-        logging.info(f"{len(processed_dirs_from_checkpoint) - len(valid_processed_paths)} stale paths removed from checkpoint list.")
+        stale_count = len(processed_dirs_from_checkpoint) - len(valid_processed_paths)
+        logging.info(f"{stale_count} stale paths (present in checkpoint but not found in input) removed from checkpoint list.")
+
+    skipped_dirs_due_to_checkpoint = sorted([
+        p for p in all_potential_dirs_rel if p in valid_processed_paths
+    ])
+    if skipped_dirs_due_to_checkpoint:
+        logging.info(f"{len(skipped_dirs_due_to_checkpoint)} directories will be SKIPPED as they are already in the checkpoint:")
+        # To avoid excessively long logs, show first few and then a count if many
+        display_limit = 10
+        for i, dir_path in enumerate(skipped_dirs_due_to_checkpoint):
+            if i < display_limit:
+                logging.info(f"  SKIPPED (checkpointed): {dir_path}")
+            elif i == display_limit:
+                logging.info(f"  ... and {len(skipped_dirs_due_to_checkpoint) - display_limit} more.")
+                break
+    else:
+        logging.info("No directories were skipped due to checkpointing (either checkpoint is empty or all dirs are new).")
 
     relative_dirs_to_process = sorted([p for p in all_potential_dirs_rel if p not in valid_processed_paths])
-    logging.info(f"{len(relative_dirs_to_process)} directories remaining after checkpoint filtering.")
+    logging.info(f"{len(relative_dirs_to_process)} directories remain to be considered after checkpoint filtering.")
 
     # --- Apply Slicing --- #
     total_remaining = len(relative_dirs_to_process)
@@ -356,12 +375,24 @@ def run_text_llm_pipeline(
     actual_end = min(total_remaining, actual_end)
 
     if actual_start >= actual_end:
-        logging.info("No directories selected for processing based on slicing and checkpointing.")
+        logging.info("No directories selected for processing based on current slice parameters and checkpointing.")
         return
 
     final_dirs_for_run = relative_dirs_to_process[actual_start:actual_end]
     num_dirs_to_process = len(final_dirs_for_run)
-    logging.info(f"Targeting {num_dirs_to_process} directories for processing in this run (slice {actual_start}:{actual_end} of remaining).")
+
+    if num_dirs_to_process > 0:
+        logging.info(f"Targeting {num_dirs_to_process} directories for processing in this run (slice [{actual_start}:{actual_end}] of remaining dirs):")
+        display_limit = 10
+        for i, dir_path in enumerate(final_dirs_for_run):
+            if i < display_limit:
+                logging.info(f"  TO PROCESS: {dir_path}")
+            elif i == display_limit:
+                logging.info(f"  ... and {num_dirs_to_process - display_limit} more.")
+                break
+    else:
+        logging.info("No directories targeted for processing in this run after slicing.")
+        return
 
     # --- Prepare Data for Workers --- #
     worker_data = [
@@ -412,12 +443,15 @@ def run_text_llm_pipeline(
                         if not dry_run:
                             try:
                                 with open(checkpoint_path, "a") as cp_f:
-                                    cp_f.write(f"{returned_path}\n")
+                                    cp_f.write(f"{returned_path}\\n")
+                                logging.info(f"CHECKPOINTED: Successfully processed and recorded '{returned_path}'")
                             except Exception as cp_e:
                                 logging.error(f"Failed to write to checkpoint file {checkpoint_path} for {returned_path}: {cp_e}")
+                        else:
+                            logging.info(f"[DRY RUN] Would have checkpointed: Successfully processed and recorded '{returned_path}'")
                     else:
                         overall_failed_dirs += 1
-                        logging.warning(f"Directory {returned_path} finished with {failed_batches} failed batches.")
+                        logging.warning(f"Directory {returned_path} finished with {failed_batches} failed batches. Not checkpointed.")
 
                 except Exception as exc:
                     overall_failed_dirs += 1
