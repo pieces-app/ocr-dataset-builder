@@ -12,7 +12,7 @@ from rich.logging import RichHandler
 
 # Assuming these can be imported from the existing processing module
 # If not, they would need to be redefined or copied here.
-from .image_processing import initialize_gemini_client, load_prompt
+from ocr_dataset_builder.llm.image_processing import initialize_gemini_client, load_prompt
 
 # Configure basic logging with RichHandler
 logging.basicConfig(

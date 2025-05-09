@@ -10,7 +10,7 @@ from rich.logging import RichHandler  # Added for rich logging
 from tqdm import tqdm
 
 # Local package imports (assuming package is installed/dev mode)
-from .processing import (
+from ocr_dataset_builder.tesseract.processing import (
     check_tesseract_install,
     process_image_with_tesseract,
 )

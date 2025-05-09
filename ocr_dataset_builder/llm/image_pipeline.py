@@ -17,14 +17,14 @@ from tqdm import tqdm
 
 
 # Import necessary functions from the other modules
-from .image_processing import (
+from ocr_dataset_builder.llm.image_processing import (
     initialize_gemini_client,
     load_prompt,
     parse_llm_response,
     process_image_sequence,
 )
 # Import cost calculation utility from the new utils module
-from .utils.costing import calculate_gemini_cost
+from ocr_dataset_builder.llm.utils.costing import calculate_gemini_cost
 
 # Configure basic logging with RichHandler
 logging.basicConfig(

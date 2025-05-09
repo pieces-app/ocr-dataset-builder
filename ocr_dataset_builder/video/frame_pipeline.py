@@ -13,7 +13,7 @@ from rich.logging import RichHandler  # Added for rich logging
 from tqdm import tqdm
 
 
-from .processing import extract_frames
+from ocr_dataset_builder.video.processing import extract_frames
 
 # Configure basic logging with RichHandler
 logging.basicConfig(

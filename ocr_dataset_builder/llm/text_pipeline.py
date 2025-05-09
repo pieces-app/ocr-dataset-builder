@@ -15,7 +15,7 @@ from rich.logging import RichHandler
 from rich.progress import Progress
 
 # Import necessary functions from the text processing module
-from .text_processing import (
+from ocr_dataset_builder.llm.text_processing import (
     DEFAULT_MODEL_NAME as DEFAULT_TEXT_MODEL_NAME, # Rename to avoid clash
     initialize_gemini_client,
     load_prompt,
@@ -24,7 +24,7 @@ from .text_processing import (
 )
 
 # Import cost calculation utility from the new location
-from .utils.costing import calculate_gemini_cost
+from ocr_dataset_builder.llm.utils.costing import calculate_gemini_cost
 
 # Configure basic logging with RichHandler
 logging.basicConfig(

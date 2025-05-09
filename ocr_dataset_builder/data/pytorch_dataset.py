@@ -13,7 +13,7 @@ from torchvision import transforms # For example transform
 from rich.logging import RichHandler
 
 # Import the new augmentation functions
-from .ocr_augmentations import (
+from ocr_dataset_builder.data.ocr_augmentations import (
     setting_slight_stutter,
     setting_gappy_and_fragmented,
     setting_overly_eager_diff,

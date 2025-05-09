@@ -6,9 +6,9 @@ from pathlib import Path
 
 
 try:
-    from .pytorch_dataset import OcrMultimodalDataset
+    from ocr_dataset_builder.data.pytorch_dataset import OcrMultimodalDataset
     # Import all augmentation functions
-    from .ocr_augmentations import (
+    from ocr_dataset_builder.data.ocr_augmentations import (
         setting_slight_stutter,
         setting_gappy_and_fragmented,
         setting_overly_eager_diff,
